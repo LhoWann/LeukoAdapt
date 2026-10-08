@@ -1,0 +1,39 @@
+# Configuration for Attention-Guided CycleGAN and ResNet34 Classifier
+# Based on Baydilli (2025) BSPC paper specifications
+
+dataset:
+  image_size: 128
+  source_samples: 2000     # 1000 ALL + 1000 HEM from C-NMC 2019
+  target_train_all: 410    # 410 ALL
+  target_train_hem: 249    # 249 Normal
+  target_test_all: 100     # 100 ALL
+  target_test_hem: 100     # 100 Normal
+  patch_size_all_idb: 257  # Native patch size in ALL-IDB
+  raw_cnmc_dir: "data/raw/C-NMC_2019"
+  raw_all_idb_dir: "data/raw/ALL-IDB"
+  processed_dir: "data/processed"
+
+gan:
+  epochs: 200
+  decay_epoch: 100
+  batch_size: 1            # CycleGAN standard batch size (optimal for 4GB VRAM)
+  gradient_accumulation_steps: 1
+  lr: 0.0001
+  beta1: 0.5
+  beta2: 0.999
+  lambda_gan: 0.5
+  lambda_cycle: 10.0
+  lambda_pixel: 1.0
+  buffer_size: 50
+  use_amp: true            # Mixed precision for RTX 3050 4GB VRAM
+  save_interval_epochs: 5
+
+classifier:
+  model_name: "resnet34"
+  epochs: 50
+  batch_size: 32
+  lr: 0.001
+  optimizer: "adam"
+  weight_decay: 0.0001
+  pretrained: true
+  num_classes: 2

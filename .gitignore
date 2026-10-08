@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+
+# Scratch Space (as per GEMINI.md)
+agent_space/
+GEMINI.md
+.agents
+
+# PyTorch checkpoints and training outputs
+checkpoints/
+logs/
+runs/
+*.pth
+*.pt
+*.onnx
+
+# Data (keep raw downloaded datasets and heavy processed files out of git)
+data/processed/
+data/raw/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
