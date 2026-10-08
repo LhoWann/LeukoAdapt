@@ -220,6 +220,28 @@ python src/data/extract_all_idb.py
 | **Target ($D_t$) S2** | `target_all_idb/patient_level/train` | 333 | 318 | **651** | Unlabeled target images from 39 slides |
 | **Target ($D_t$) S2** | `target_all_idb/patient_level/test` | 177 | 31 | **208** | Unseen patient slides (Leak-Free Test) |
 
+### Source Cohort Selection & Status of Remaining C-NMC Folds
+
+The ISBI 2019 C-NMC challenge provides 10,661 single-cell images partitioned by patient into three training folds (`fold_0`, `fold_1`, and `fold_2`). In strict accordance with the baseline protocol from Baydilli (2025), our pipeline selects a balanced cohort of **2,000 images** (1,000 ALL + 1,000 HEM) sampled exclusively from `fold_0`.
+
+#### A. Methodological Rationale (Why only 2,000 images from Fold 0?)
+1. **Prior Class Balance**: Raw C-NMC data exhibits severe class imbalance (7,272 ALL vs 3,389 HEM, ~2.15:1 ratio). Drawing exactly 1,000 samples per class guarantees an unbiased uniform prior ($P(\text{ALL}) = P(\text{Normal}) = 0.5$).
+2. **CycleGAN Computational Feasibility**: Training 2 generators and 2 PatchGAN discriminators with 10,661 images would require over 36 hours on a 4GB GPU. A 2,000-image source cohort matches the target domain scale (859 cells) while keeping epoch runtimes practical (~2.3 min/epoch).
+3. **Structured Patient Grouping**: ISBI organized folds by patient ID. Drawing 2,000 samples strictly from `fold_0` prevents demographic bleeding and preserves patient-level encapsulation.
+
+#### B. Allocation Status of Remaining Folds (`fold_1` & `fold_2`)
+Neither `fold_1` nor `fold_2` is currently active in the training loop; both remain dormant in `data/raw/C-NMC_2019/`:
+
+| Subset | Sample Volume | Pipeline Status | Role in Framework |
+| :--- | :---: | :---: | :--- |
+| **`fold_0` (Selected)** | 2,000 cells | **Active** | Source images translated via GAN $\rightarrow$ Train ResNet34 |
+| **`fold_0` (Surplus)** | 1,527 cells | *Dormant* | Unused source cells (1,397 ALL + 130 HEM) |
+| **`fold_1`** | 3,567 cells | *Dormant* | Available for source validation or data volume scaling |
+| **`fold_2`** | 3,567 cells | *Dormant* | Available for cross-cohort source testing |
+
+#### C. Why Fold 1 is Not Used as Validation in UDA
+In Unsupervised Domain Adaptation (UDA), the primary scientific objective is assessing **cross-domain transferability** to the target clinical clinic (ALL-IDB), not in-domain accuracy within the source hospital (C-NMC). Evaluating ResNet34 on `fold_1` measures only source-domain memorization. Consequently, Baydilli (2025) benchmarks classifier performance directly on 200 blind ALL-IDB target cells. Researchers may optionally designate `fold_1` as a source validation set for early stopping if strictly isolating hyperparameter tuning from target test data.
+
 ---
 
 ## 7. Execution Guide (`train.py`)
