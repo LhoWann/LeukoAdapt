@@ -1,15 +1,42 @@
-# LeukoAdapt: Attention-Guided Unsupervised Domain Adaptation for Robust Acute Lymphocytic Leukemia (ALL) Diagnosis
+<div align="center">
 
-[![Python 3.11](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
-[![PyTorch 2.14+cu130](https://img.shields.io/badge/PyTorch-2.14%2Bcu130-red.svg)](https://pytorch.org/)
-[![Code Style: Ruff](https://img.shields.io/badge/Code%20Style-Ruff-000000.svg)](https://github.com/astral-sh/ruff)
-[![Tests: 8 Passed](https://img.shields.io/badge/Tests-8%20Passed-brightgreen.svg)]()
-[![Hardware: RTX 3050 Laptop](https://img.shields.io/badge/Hardware-RTX%203050%20(4GB%20VRAM)-green.svg)]()
+# LeukoAdapt
 
-A PyTorch deep learning framework for **Unsupervised Domain Adaptation (UDA)** and **Attention-Guided Cross-Center Translation** in peripheral blood smear diagnosis. 
+### Attention-Guided Unsupervised Domain Adaptation for Robust Acute Lymphocytic Leukemia (ALL) Diagnosis
 
-This repository replicates and advances the state-of-the-art methodology from:
-> **Yusuf Yargı Baydilli (2025)**, *"Unsupervised attention-guided domain adaptation model for Acute Lymphocytic Leukemia (ALL) diagnosis"*, **Biomedical Signal Processing and Control**, Vol. 101, 107159. [DOI: 10.1016/j.bspc.2024.107159](https://doi.org/10.1016/j.bspc.2024.107159)
+[![Python 3.11](https://img.shields.io/badge/Python-3.11-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch 2.14](https://img.shields.io/badge/PyTorch-2.14%2Bcu130-EE4C2C.svg?style=flat&logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![Code Style: Ruff](https://img.shields.io/badge/Code%20Style-Ruff-000000.svg?style=flat&logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
+[![Tests: 8 Passed](https://img.shields.io/badge/Tests-8%20Passed-2ea44f.svg?style=flat&logo=pytest&logoColor=white)](#9-quality-assurance--verification)
+[![Hardware: RTX 3050](https://img.shields.io/badge/Hardware-RTX%203050%20(4GB%20VRAM)-76B900.svg?style=flat&logo=nvidia&logoColor=white)](#5-setup--installation)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat)](LICENSE)
+
+<p align="center">
+  A PyTorch deep learning framework for <b>Unsupervised Domain Adaptation (UDA)</b> and <b>Attention-Guided Cross-Center Translation</b> in peripheral blood smear diagnosis.
+</p>
+
+</div>
+
+---
+
+> [!NOTE]
+> This repository replicates and advances the state-of-the-art methodology published in:  
+> **Yusuf Yargı Baydilli (2025)**, *"Unsupervised attention-guided domain adaptation model for Acute Lymphocytic Leukemia (ALL) diagnosis"*, **Biomedical Signal Processing and Control**, Vol. 101, 107159. [DOI: 10.1016/j.bspc.2024.107159](https://doi.org/10.1016/j.bspc.2024.107159).
+
+---
+
+## Table of Contents
+
+- [1. Overview & Problem Definition](#1-overview--problem-definition)
+- [2. Key Architectural Features & Rigorous Data Integrity](#2-key-architectural-features--rigorous-data-integrity)
+- [3. End-to-End Methodology & Pipeline Flow](#3-end-to-end-methodology--pipeline-flow)
+- [4. Repository Architecture](#4-repository-architecture)
+- [5. Setup & Installation](#5-setup--installation)
+- [6. Dataset Preprocessing Pipeline](#6-dataset-preprocessing-pipeline)
+- [7. Execution Guide (`train.py`)](#7-execution-guide-trainpy)
+- [8. Command-Line Options Reference](#8-command-line-options-reference)
+- [9. Quality Assurance & Verification](#9-quality-assurance--verification)
+- [10. References](#10-references)
 
 ---
 
@@ -23,11 +50,14 @@ Marginal data distributions differ significantly ($P(X_s) \neq P(X_t)$) due to v
 - Erythrocyte (RBC) background densities and illumination glare.
 
 ### B. The Conceptual Analogy
-> **The Fruit Sorting Analogy**:
-> Suppose two vendor stalls sell apples. Stall A sells clean, pre-cut red apples on transparent trays (*C-NMC 2019: segmented single-cell images with clean black backgrounds*). 
-> Stall B sells raw green apples lying in dirty straw baskets (*ALL-IDB1: whole slide blood smears with dense red blood cell backgrounds*). 
-> An automated sorting robot trained solely at Stall A will fail at Stall B because it gets confused by the straw and green hues. 
-> Domain adaptation serves as an optical adapter: it converts Stall A's apples to mimic Stall B's lighting and background while strictly preserving the internal cellular anatomy of the fruit.
+
+> [!TIP]
+> **The Fruit Sorting Analogy**  
+> Imagine two market stalls selling apples:
+> - **Stall A (C-NMC 2019)** sells pre-cut, washed red apples on clean transparent trays (*isolated cells with black backgrounds*).
+> - **Stall B (ALL-IDB1)** sells raw apples inside unwashed straw baskets (*cells surrounded by complex red blood cell backgrounds*).
+> 
+> An automated sorter trained only on Stall A fails at Stall B due to unfamiliar straw and lighting. **Domain adaptation acts as an optical adapter**: it adapts Stall A's images into Stall B's realistic appearance while strictly preserving cellular anatomy.
 
 ---
 
@@ -60,7 +90,7 @@ A foundational design decision in this framework is the exclusive extraction of 
    - In medical imaging benchmarks, this constitutes severe information leakage: test accuracy would be artificially inflated because the domain adapter already memorized the target test cells.
 4. **Metric Integrity & Exact Baseline Reproduction**:
    - Evaluating on ALL-IDB1 and ALL-IDB2 simultaneously would double-count 260 cells, invalidating diagnostic accuracy and F1 metrics.
-   - Extracting 510 blasts (via `.xyc` coordinates) and 349 normal leukocytes directly from ALL-IDB1 achieves the exact 859-cell target pool specified by Baydilli (2025) with complete provenance logged in `metadata_target_cells.json`.
+   - Extracting 510 blasts (via `.xyc` coordinates) and 349 normal leukocytes directly from ALL-IDB1 achieves the exact 859-cell target pool specified by Baydilli (2025) with complete provenance logged in [metadata_target_cells.json](data/processed/target_all_idb/metadata_target_cells.json).
 
 ---
 
@@ -68,12 +98,16 @@ A foundational design decision in this framework is the exclusive extraction of 
 
 The framework operates via a three-phase pipeline bridging the domain gap between cleanly segmented source cells and natural microscopic target blood smears:
 
-![LeukoAdapt Methodology Pipeline](docs/assets/methodology.png)
+<p align="center">
+  <img src="docs/assets/methodology.png" alt="LeukoAdapt Methodology Pipeline" width="100%" />
+</p>
 
 ### Phase 1: Attention-Guided Domain Translation (GAN)
 - **Objective**: Translate 2,000 labeled C-NMC source cells ($s$) into the realistic visual style of the ALL-IDB target domain ($t$) without altering cellular diagnosis.
 - **Attention-Guided Generator ($G_{S \to T}$ & $A_S$)**: Produces a synthetic target image and computes a spatial attention mask ($s_a \in [0, 1]$). The blended translated cell is formed via:
-  $$s' = (s_a \odot G_{S \to T}(s)) \oplus ((1 - s_a) \odot s)$$
+
+  $$s' = (s_a \odot G_{S \to T}(s)) + ((1 - s_a) \odot s)$$
+
 - **Attention-Masked PatchGAN Discriminator ($D_T$)**: Receives attention-masked real images ($s_a \odot t$) and attention-masked fake images ($s_a \odot s'$). This ensures adversarial guidance focuses purely on cell morphology and staining rather than background artifacts.
 - **Optimization**: Minimized using least-squares adversarial loss ($\lambda_{gan}=0.5$), cycle-consistency loss ($\lambda_{cycle}=10.0$), and pixel identity loss ($\lambda_{pixel}=1.0$). Target labels are completely unseen and unused.
 
@@ -92,20 +126,23 @@ The framework operates via a three-phase pipeline bridging the domain gap betwee
 
 ## 4. Repository Architecture
 
-```
+```text
 ALL-IDB-Generalization/
 ├── configs/
 │   └── config.yaml               # Hyperparameters for GAN and ResNet34
 ├── data/
-│   ├── raw/                      # Downloaded raw datasets
-│   │   ├── ALL-IDB/              # ALL_IDB1 (.jpg images & .xyc coordinates)
+│   ├── raw/                      # Raw datasets
+│   │   ├── ALL-IDB/              # ALL_IDB1 (.jpg whole-slides & .xyc coordinates)
 │   │   └── C-NMC_2019/           # ISBI 2019 C-NMC (fold_0, fold_1, fold_2)
 │   └── processed/                # Normalized patches (128x128 resolution)
 │       ├── source_cnmc/          # 2,000 C-NMC patches (1,000 ALL + 1,000 HEM)
-│       └── target_all_idb/       # 859 target patches from ALL-IDB1
+│       └── target_all_idb/       # 859 target patches extracted from ALL-IDB1
 │           ├── cell_level/       # Scenario 1 (659 train, 200 test)
 │           ├── patient_level/    # Scenario 2 (patient-isolated train and test)
 │           └── metadata_target_cells.json # Full provenance tracking
+├── docs/
+│   └── assets/                   # Publication-quality diagram assets
+│       └── methodology.png       # 300 DPI architecture diagram
 ├── src/
 │   ├── data/
 │   │   ├── dataset.py            # Unpaired and labeled PyTorch DataLoaders
@@ -132,7 +169,7 @@ ALL-IDB-Generalization/
 ├── pyproject.toml                # Ruff configuration (PEP8 / 120-char line limit)
 ├── requirements.txt              # Project dependencies
 ├── train.py                      # Central CLI pipeline runner
-└── README.md                     # Documentation
+└── README.md                     # Project documentation
 ```
 
 ---
@@ -148,10 +185,10 @@ To activate the virtual environment in Windows PowerShell:
 ```
 
 ### B. Dependency Installation
-If setting up in a new environment, install dependencies using:
+If setting up in a fresh environment, install dependencies using:
 
-```powershell
-# 1. Install PyTorch with CUDA 13.0 acceleration
+```bash
+# 1. Install PyTorch with CUDA acceleration
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 
 # 2. Install computer vision and utility libraries
@@ -165,7 +202,7 @@ pip install -r requirements.txt
 The processed datasets are structured and validated in `data/processed/`.
 To reproduce the extraction and sampling from raw sources:
 
-```powershell
+```bash
 # 1. Sample 2,000 balanced single-cell images from C-NMC fold_0
 python src/data/sample_cnmc.py
 
@@ -176,23 +213,23 @@ python src/data/extract_all_idb.py
 ### Dataset Distribution Summary
 
 | Domain | Partition | ALL (Blast) | HEM (Normal) | Total | Purpose |
-| :--- | :--- | :--- | :--- | :--- | :--- |
+| :--- | :--- | :---: | :---: | :---: | :--- |
 | **Source ($D_s$)** | `source_cnmc/train` | 1,000 | 1,000 | **2,000** | Labeled training images for domain transfer |
 | **Target ($D_t$) S1** | `target_all_idb/cell_level/train` | 410 | 249 | **659** | Unlabeled target images for GAN adaptation |
 | **Target ($D_t$) S1** | `target_all_idb/cell_level/test` | 100 | 100 | **200** | Hidden benchmark test set (Replication) |
-| **Target ($D_t$) S2** | `target_all_idb/patient_level/train`| 333 | 318 | **651** | Unlabeled target images from 39 slides |
+| **Target ($D_t$) S2** | `target_all_idb/patient_level/train` | 333 | 318 | **651** | Unlabeled target images from 39 slides |
 | **Target ($D_t$) S2** | `target_all_idb/patient_level/test` | 177 | 31 | **208** | Unseen patient slides (Leak-Free Test) |
 
 ---
 
 ## 7. Execution Guide (`train.py`)
 
-All experimental stages are managed through the centralized CLI runner [train.py](file:///D:/ALL-IDB-Generalization/train.py):
+All experimental stages are managed through the centralized CLI runner [train.py](train.py):
 
 ### Stage 1: Train Attention-Guided CycleGAN
 Trains the generator and PatchGAN discriminator to adapt C-NMC images to ALL-IDB style:
 
-```powershell
+```bash
 # Full 200 epochs on Scenario 1 (Baseline)
 python train.py --stage gan --scenario cell_level --epochs_gan 200
 
@@ -203,21 +240,21 @@ python train.py --stage gan --scenario cell_level --epochs_gan 5
 ### Stage 2: Translate Source Dataset
 Uses the trained generator checkpoint to synthesize 2,000 target-style images:
 
-```powershell
+```bash
 python train.py --stage translate --scenario cell_level
 ```
 
 ### Stage 3: Train Classifier & Evaluate
 Trains ResNet34 for 50 epochs on translated images and evaluates accuracy on 200 test samples:
 
-```powershell
+```bash
 python train.py --stage classifier --scenario cell_level --epochs_clf 50
 ```
 
 ### Full End-to-End Pipeline
 Runs all three stages sequentially in a single command:
 
-```powershell
+```bash
 python train.py --stage all --scenario cell_level --epochs_gan 200 --epochs_clf 50
 ```
 
@@ -234,7 +271,7 @@ python train.py --stage all --scenario cell_level --epochs_gan 200 --epochs_clf 
 | `--epochs_clf` | int | `50` | Number of training epochs for ResNet34 classifier |
 | `--batch_size_gan` | int | `1` | Batch size for GAN (1 recommended for 4GB VRAM) |
 | `--batch_size_clf` | int | `32` | Batch size for ResNet34 training |
-| `--lr_gan` | float | `0.0001` | Initial Adam learning rate for GAN ($\beta_1=0.5, \beta_2=0.999$) |
+| `--lr_gan` | float | `0.0001` | Initial Adam learning rate for GAN (`beta1=0.5, beta2=0.999`) |
 | `--lr_clf` | float | `0.001` | Initial Adam learning rate for ResNet34 |
 | `--checkpoint_gan` | str | `None` | Path to custom `.pth` checkpoint for translation |
 | `--no_amp` | flag | `False` | Disable Automatic Mixed Precision |
@@ -246,7 +283,7 @@ python train.py --stage all --scenario cell_level --epochs_gan 200 --epochs_clf 
 
 Unit tests and code linting can be executed via:
 
-```powershell
+```bash
 # Run the 8-test validation suite (tensor shapes, loss gradients, data loading)
 pytest -v tests/
 
@@ -264,5 +301,4 @@ ruff format --check src tests train.py
 
 1. **Baydilli, Y. Y. (2025)**. *Unsupervised attention-guided domain adaptation model for Acute Lymphocytic Leukemia (ALL) diagnosis*. Biomedical Signal Processing and Control, 101, 107159.
 2. **Labati, R. D., Piuri, V., & Scotti, F. (2011)**. *All-IDB: The acute lymphoblastic leukemia image database for image processing*. In 18th IEEE International Conference on Image Processing (ICIP), pp. 2045–2048.
-3. **Gupta, A., et al. (2019)**. *ISBI 2019 C-NMC Challenge: Classification of Normal vs Malignant Cells in B-ALL White Blood Cancer Microscopic Images*. TCIA.#   L e u k o A d a p t  
- 
+3. **Gupta, A., et al. (2019)**. *ISBI 2019 C-NMC Challenge: Classification of Normal vs Malignant Cells in B-ALL White Blood Cancer Microscopic Images*. TCIA.
