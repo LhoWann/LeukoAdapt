@@ -1,17 +1,40 @@
 """Evaluation metrics for classification and image translation quality.
 
-Implements metrics from Table 4 and Table 5 of Baydilli (2025):
-- Accuracy, Precision, Recall, Specificity, F-Score, Confusion Matrix
-- PSNR, SSIM
+Implements the Table 5 metrics of Baydilli (2025) (TN, TP, Precision, Recall, Specificity, Accuracy, F-Score) and the
+PSNR of Table 4, plus NPV, Balanced Accuracy, AUROC, and a Wilson confidence interval for accuracy.
 """
 
 import numpy as np
 import torch
+from sklearn.metrics import roc_auc_score
+
+WILSON_Z_95 = 1.96
+
+
+def wilson_interval(successes: int, total: int, z: float = WILSON_Z_95) -> tuple[float, float]:
+    """Compute the Wilson score confidence interval for a binomial proportion.
+
+    Args:
+        successes: Number of correct predictions.
+        total: Number of evaluated samples.
+        z: Normal quantile of the confidence level (default 1.96 for 95%).
+
+    Returns:
+        Tuple of (lower, upper) bounds.
+    """
+    if total == 0:
+        return 0.0, 0.0
+    p = successes / total
+    denom = 1.0 + z**2 / total
+    center = (p + z**2 / (2 * total)) / denom
+    half = z * np.sqrt(p * (1 - p) / total + z**2 / (4 * total**2)) / denom
+    return float(center - half), float(center + half)
 
 
 def calculate_classification_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
+    y_prob: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Calculate binary classification performance metrics.
 
@@ -20,10 +43,11 @@ def calculate_classification_metrics(
     Args:
         y_true: Array of ground truth binary labels.
         y_pred: Array of predicted binary labels.
+        y_prob: Optional array of positive-class probabilities used for AUROC.
 
     Returns:
-        Dictionary containing TN, TP, FP, FN, accuracy, precision, recall,
-        specificity, and f1_score.
+        Dictionary containing TN, TP, FP, FN, accuracy, balanced accuracy, precision, recall, specificity, NPV,
+        f1_score, the 95% Wilson interval of accuracy, and AUROC when probabilities are given.
     """
     tn = int(np.sum((y_true == 0) & (y_pred == 0)))
     tp = int(np.sum((y_true == 1) & (y_pred == 1)))
@@ -35,19 +59,52 @@ def calculate_classification_metrics(
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    npv = tn / (tn + fn) if (tn + fn) > 0 else 0.0
 
     f1_score = 2.0 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    ci_low, ci_high = wilson_interval(tp + tn, total)
 
-    return {
+    metrics = {
         "TN": float(tn),
         "TP": float(tp),
         "FP": float(fp),
         "FN": float(fn),
         "Accuracy": float(accuracy),
+        "Accuracy_CI95_Low": ci_low,
+        "Accuracy_CI95_High": ci_high,
+        "Balanced_Accuracy": float((recall + specificity) / 2.0),
         "Precision": float(precision),
         "Recall": float(recall),
         "Specificity": float(specificity),
+        "NPV": float(npv),
         "F_Score": float(f1_score),
+    }
+    if y_prob is not None and len(np.unique(y_true)) == 2:
+        metrics["AUROC"] = float(roc_auc_score(y_true, y_prob))
+    return metrics
+
+
+def paper_table5_columns(metrics: dict[str, float]) -> dict[str, float]:
+    """Map metrics onto the column labels of Baydilli (2025) Table 5 for a like-for-like comparison.
+
+    The paper's columns are mislabelled: its row for the proposed model (TN=91, TP=87 on 100+100 test cells) lists
+    "Precision" 0.8700 = TP/(TP+FN), "Recall" 0.9063 = TP/(TP+FP) and "Specificity" 0.8750 = TN/(TN+FN). Accuracy and
+    F-Score are unaffected because F1 is symmetric in precision and recall.
+
+    Args:
+        metrics: Output of calculate_classification_metrics.
+
+    Returns:
+        Dictionary keyed by the paper's column names.
+    """
+    return {
+        "TN": metrics["TN"],
+        "TP": metrics["TP"],
+        "Precision": metrics["Recall"],
+        "Recall": metrics["Precision"],
+        "Specificity": metrics["NPV"],
+        "Accuracy": metrics["Accuracy"],
+        "F-Score": metrics["F_Score"],
     }
 
 

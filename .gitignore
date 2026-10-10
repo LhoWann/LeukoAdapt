@@ -29,6 +29,7 @@ wheels/
 # Scratch Space (as per GEMINI.md)
 agent_space/
 GEMINI.md
+CLAUDE.md
 .agents
 
 # PyTorch checkpoints and training outputs

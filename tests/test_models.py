@@ -72,20 +72,33 @@ class TestAttentionCycleGANModels(unittest.TestCase):
             raise AssertionError(f"Expected masked logits (2, 1, 14, 14), got {out_masked.shape}")
 
     def test_cyclegan_losses(self) -> None:
-        """Verify AttentionCycleGAN composite loss calculations."""
-        model = AttentionCycleGAN()
+        """Verify AttentionCycleGAN composite loss calculations for every real-mask reading."""
         s = torch.randn(self.batch_size, 3, self.img_size, self.img_size)
         t = torch.randn(self.batch_size, 3, self.img_size, self.img_size)
 
-        loss_g, g_dict, (fake_t, s_a, _) = model.compute_generator_loss(s, t)
-        loss_d, d_dict = model.compute_discriminator_loss(t, fake_t.detach(), s_a.detach())
+        for real_mask in ("target", "source", "none"):
+            model = AttentionCycleGAN(real_mask=real_mask)
+            loss_g, g_dict, (masked_fake, fake_t, s_a) = model.compute_generator_loss(s)
+            loss_d, _ = model.compute_discriminator_loss(model.mask_real_target(t, s_a), masked_fake.detach())
 
-        if loss_g.item() <= 0:
-            raise AssertionError("Generator loss must be positive")
-        if loss_d.item() <= 0:
-            raise AssertionError("Discriminator loss must be positive")
-        if "loss_cycle" not in g_dict:
-            raise AssertionError("g_dict must contain loss_cycle")
+            if loss_g.item() <= 0 or loss_d.item() <= 0:
+                raise AssertionError(f"{real_mask}: losses must be positive, got G={loss_g.item()} D={loss_d.item()}")
+            if not {"loss_gan", "loss_cycle", "loss_pixel"} <= g_dict.keys():
+                raise AssertionError(f"{real_mask}: missing loss terms in {sorted(g_dict)}")
+            if not torch.allclose(masked_fake, s_a * fake_t):
+                raise AssertionError(f"{real_mask}: discriminator fake input must be s_a * s'")
+
+    def test_closed_mask_is_identity(self) -> None:
+        """A fully closed attention mask returns the source unchanged (the collapse of the literal Eq. 3)."""
+        module = AttentionFusionModule(kernel_size=7)
+        torch.nn.init.zeros_(module.conv.weight)
+        module.conv.weight.data[:, 0] = -1e3
+        s = torch.randn(self.batch_size, 3, self.img_size, self.img_size)
+        g_s = torch.rand(self.batch_size, 3, self.img_size, self.img_size) + 0.5
+
+        s_prime, s_a = module(s, g_s)
+        if s_a.max().item() > 1e-6 or not torch.allclose(s_prime, s):
+            raise AssertionError("A closed mask must give s' = s")
 
     def test_classifier_forward(self) -> None:
         """Verify ResNet34 LeukemiaClassifier output logits and feature extraction."""

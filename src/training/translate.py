@@ -42,6 +42,8 @@ def translate_source_dataset(
 
     # Load generator and attention module
     ckpt = torch.load(checkpoint_path, map_location=target_device, weights_only=True)
+    if ckpt.get("collapsed"):
+        print(f"WARNING: {checkpoint_path} collapsed (s' = s): translated images equal the source.")
     gen = AttentionGenerator(3, 3, num_res_blocks=6).to(target_device)
     attn = AttentionFusionModule(kernel_size=7).to(target_device)
 

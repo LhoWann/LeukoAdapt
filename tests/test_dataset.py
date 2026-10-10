@@ -25,8 +25,8 @@ class TestProcessedDatasets(unittest.TestCase):
             transform=transform,
         )
 
-        if len(dataset) < 659:
-            raise AssertionError(f"Expected at least 659 samples, got {len(dataset)}")
+        if len(dataset) < 435:
+            raise AssertionError(f"Expected at least 435 samples, got {len(dataset)}")
 
         loader = DataLoader(dataset, batch_size=4, shuffle=True)
         img_s, img_t = next(iter(loader))
@@ -35,6 +35,18 @@ class TestProcessedDatasets(unittest.TestCase):
             raise AssertionError(f"Expected source shape (4, 3, 128, 128), got {img_s.shape}")
         if img_t.shape != (4, 3, 128, 128):
             raise AssertionError(f"Expected target shape (4, 3, 128, 128), got {img_t.shape}")
+
+    def test_target_class_balancing(self) -> None:
+        """Verify the Scenario 1 target pool (410 ALL + 25 Normal) is padded with flipped Normal copies to 410 + 410."""
+        dataset = UnpairedLeukemiaDataset(self.source_dir, self.target_s1_train, balance_target_classes=True)
+        num_flipped = sum(flip for _, flip in dataset.target_items)
+
+        if len(dataset.target_items) != 820:
+            raise AssertionError(f"Expected 820 balanced target items, got {len(dataset.target_items)}")
+        if num_flipped != 385:
+            raise AssertionError(f"Expected 385 flipped Normal copies, got {num_flipped}")
+        if any(path.parent.name != "hem" for path, flip in dataset.target_items if flip):
+            raise AssertionError("Only the minority 'hem' class may be padded")
 
     def test_classification_test_dataset(self) -> None:
         """Verify LeukemiaClassificationDataset loads exactly 200 test samples."""

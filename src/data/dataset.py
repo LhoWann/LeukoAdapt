@@ -46,6 +46,7 @@ class UnpairedLeukemiaDataset(Dataset):
         source_dir: str,
         target_dir: str,
         transform: Callable | None = None,
+        balance_target_classes: bool = False,
     ) -> None:
         """Initialize Unpaired Dataset.
 
@@ -53,14 +54,26 @@ class UnpairedLeukemiaDataset(Dataset):
             source_dir: Directory containing source domain images.
             target_dir: Directory containing target domain images.
             transform: Optional transform applied to both source and target images.
+            balance_target_classes: Pad the minority target class ('all'/'hem' subfolders) with horizontally flipped
+                copies up to the majority count, as in Baydilli (2025) Section 5.1.2 (paper: 410 ALL + 249 Normal ->
+                410 ALL + 410 Normal; here 410 ALL + 25 Normal -> 410 + 410).
         """
         self.source_paths = self._load_image_paths(source_dir)
-        self.target_paths = self._load_image_paths(target_dir)
+        target_paths = self._load_image_paths(target_dir)
 
         if not self.source_paths:
             raise ValueError(f"No valid images found in source_dir: {source_dir}")
-        if not self.target_paths:
+        if not target_paths:
             raise ValueError(f"No valid images found in target_dir: {target_dir}")
+
+        self.target_items: list[tuple[Path, bool]] = [(p, False) for p in target_paths]
+        if balance_target_classes:
+            by_class = [self._load_image_paths(str(Path(target_dir) / cls)) for cls in ("all", "hem")]
+            minority, majority = sorted(by_class, key=len)
+            if not minority:
+                raise ValueError(f"balance_target_classes needs non-empty 'all' and 'hem' folders in {target_dir}")
+            deficit = len(majority) - len(minority)
+            self.target_items += [(minority[i % len(minority)], True) for i in range(deficit)]
 
         self.transform = transform or get_default_transform(image_size=128, is_train=True)
 
@@ -77,15 +90,17 @@ class UnpairedLeukemiaDataset(Dataset):
 
     def __len__(self) -> int:
         """Length is maximum between source and target sets."""
-        return max(len(self.source_paths), len(self.target_paths))
+        return max(len(self.source_paths), len(self.target_items))
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         """Get unpaired sample (s, t)."""
         idx_s = index % len(self.source_paths)
-        idx_t = random.randint(0, len(self.target_paths) - 1)
+        target_path, flip_target = self.target_items[random.randint(0, len(self.target_items) - 1)]
 
         img_s = Image.open(self.source_paths[idx_s]).convert("RGB")
-        img_t = Image.open(self.target_paths[idx_t]).convert("RGB")
+        img_t = Image.open(target_path).convert("RGB")
+        if flip_target:
+            img_t = img_t.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
 
         tensor_s = self.transform(img_s)
         tensor_t = self.transform(img_t)
