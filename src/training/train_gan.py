@@ -1,7 +1,7 @@
 """Training procedure for Attention-Guided CycleGAN.
 
-Implements Algorithm 4 from Baydilli (2025) with mixed precision and memory optimization.
-Terminal output matches PyTorch Lightning aesthetics.
+Implements Algorithm 4 of Baydilli (2025) with mixed precision, plus the background compositing and whole-image
+discriminator of this repository's modified version.
 """
 
 from collections import defaultdict
@@ -13,14 +13,15 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from tqdm import tqdm
 
+from src.data.backgrounds import background_for, composite_on_background
 from src.data.dataset import UnpairedLeukemiaDataset, get_default_transform
 from src.models.cyclegan import AttentionCycleGAN, RealMask
-from src.utils.image_pool import ImagePool
-from src.utils.lightning_logger import (
-    print_lightning_header,
+from src.utils.console import (
+    print_device_header,
     print_metrics_table,
     print_model_summary,
 )
+from src.utils.image_pool import ImagePool
 
 COLLAPSE_CHECK_EPOCH = 3
 MIN_TRANSLATION_DELTA = 0.02
@@ -52,8 +53,10 @@ def train_attention_cyclegan(
     lambda_gan: float = 0.5,
     lambda_cycle: float = 10.0,
     lambda_pixel: float = 1.0,
-    real_mask: RealMask = "source",
+    lambda_identity: float = 0.0,
+    real_mask: RealMask = "none",
     balance_target_classes: bool = True,
+    background_dir: str | None = None,
     buffer_size: int = 50,
     save_interval: int = 5,
     image_size: int = 128,
@@ -73,8 +76,11 @@ def train_attention_cyclegan(
         lambda_gan: Adversarial loss multiplier (default 0.5).
         lambda_cycle: Cycle consistency loss multiplier (default 10.0).
         lambda_pixel: Pixel loss multiplier (default 1.0).
+        lambda_identity: Target identity loss multiplier (default 0, not in the paper).
         real_mask: Mask of the real discriminator input, see AttentionCycleGAN.
         balance_target_classes: Pad the minority target class with flipped copies (paper Section 5.1.2).
+        background_dir: Bank of target backgrounds that source cells are pasted onto (None keeps the black
+            C-NMC background, as in the paper).
         buffer_size: History image pool capacity (default 50).
         save_interval: Save model weights and a preview grid every N epochs (default 5). The paper keeps the
             visually best of these checkpoints.
@@ -90,16 +96,24 @@ def train_attention_cyclegan(
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    print_lightning_header(target_device)
+    print_device_header(target_device)
 
     # Dataset & DataLoader
     transform = get_default_transform(image_size=image_size, is_train=True)
-    dataset = UnpairedLeukemiaDataset(source_dir, target_dir, transform, balance_target_classes=balance_target_classes)
+    dataset = UnpairedLeukemiaDataset(
+        source_dir, target_dir, transform, balance_target_classes=balance_target_classes, background_dir=background_dir
+    )
     print(f"GAN data: {len(dataset.source_paths)} source images, {len(dataset.target_items)} target images")
     eval_transform = get_default_transform(image_size=image_size, is_train=False)
     preview_step = max(1, len(dataset.source_paths) // NUM_PREVIEW_IMAGES)
     preview_paths = dataset.source_paths[::preview_step][:NUM_PREVIEW_IMAGES]
-    preview_s = torch.stack([eval_transform(Image.open(p).convert("RGB")) for p in preview_paths]).to(target_device)
+    preview_images = [Image.open(p).convert("RGB") for p in preview_paths]
+    if dataset.backgrounds:
+        preview_images = [
+            composite_on_background(img, Image.open(background_for(p.name, dataset.backgrounds)))
+            for img, p in zip(preview_images, preview_paths, strict=True)
+        ]
+    preview_s = torch.stack([eval_transform(img) for img in preview_images]).to(target_device)
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -115,6 +129,7 @@ def train_attention_cyclegan(
         lambda_gan=lambda_gan,
         lambda_cycle=lambda_cycle,
         lambda_pixel=lambda_pixel,
+        lambda_identity=lambda_identity,
         real_mask=real_mask,
     ).to(target_device)
 
@@ -159,7 +174,7 @@ def train_attention_cyclegan(
             # ---------------------
             optimizer_g.zero_grad()
             with torch.amp.autocast("cuda", enabled=(use_amp and device == "cuda")):
-                loss_g, g_stats, (masked_fake, _, s_a) = model.compute_generator_loss(real_s)
+                loss_g, g_stats, (masked_fake, _, s_a) = model.compute_generator_loss(real_s, real_t)
 
             scaler.scale(loss_g).backward()
             scaler.step(optimizer_g)
@@ -210,6 +225,7 @@ def train_attention_cyclegan(
                 "loss_discriminator": avg_stats["loss_d"],
                 "loss_cycle": avg_stats["loss_cycle"],
                 "loss_pixel": avg_stats["loss_pixel"],
+                "loss_identity": avg_stats["loss_identity"],
                 "mask_mean": avg_stats["mask_mean"],
                 "translation_delta": avg_stats["translation_delta"],
                 "fake_dark_fraction": avg_stats["fake_dark_fraction"],
@@ -223,7 +239,9 @@ def train_attention_cyclegan(
                 {
                     "epoch": epoch,
                     "real_mask": real_mask,
+                    "background_dir": background_dir,
                     "lambda_pixel": lambda_pixel,
+                    "lambda_identity": lambda_identity,
                     "mask_mean": avg_stats["mask_mean"],
                     "translation_delta": avg_stats["translation_delta"],
                     "collapsed": collapsed,

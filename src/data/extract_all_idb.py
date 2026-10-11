@@ -18,6 +18,9 @@ Generates two experimental partitions:
   excluded). Test groups are drawn with a seed until about 20% of the cells of every (class, slide resolution) stratum
   are in Test. ALL-IDB1 documents no patient IDs, so group isolation is necessary but not sufficient for patient
   isolation.
+
+Each scenario also gets a bank of cell-free background patches (<scenario>/background), cropped only from slides on
+its training side, onto which source cells are pasted before translation (see src/data/backgrounds.py).
 """
 
 import json
@@ -30,6 +33,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from src.data.backgrounds import extract_background_bank
 from src.data.slide_overlap import find_overlapping_slides, overlap_groups
 
 PATCH_SIZE = 257
@@ -367,6 +371,9 @@ def extract_all_idb(
         ("scenario_1_cell_level", cell_level_dir, "scenario_1_split", "cell"),
         ("scenario_2_slide_level", slide_level_dir, "scenario_2_split", "slide"),
     )
+    centroids: dict[str, list[list[int]]] = defaultdict(list)
+    for cell in cells:
+        centroids[cell["source_image"]].append(cell["centroid"])
     for scenario_key, scenario_dir, split_key, tag in scenarios:
         counts = {f"{split}_{cls}": 0 for split in ("train", "test") for cls in classes}
         for cls, (patches, metadata) in classes.items():
@@ -381,6 +388,11 @@ def extract_all_idb(
         counts["train_slides"] = len(slides_of(split_key, "train"))
         counts["test_slides"] = len(slides_of(split_key, "test"))
         counts["slides_in_both_splits"] = len(slides_of(split_key, "train") & slides_of(split_key, "test"))
+        background_slides = sorted(slides_of(split_key, "train"))
+        background_dir = scenario_dir / "background"
+        counts["background_patches"] = extract_background_bank(
+            im_path, background_slides, centroids, background_dir, image_size, seed
+        )
         summary[scenario_key] = counts
 
     with open(out_base / "metadata_target_cells.json", "w") as f:

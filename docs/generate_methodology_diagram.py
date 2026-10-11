@@ -65,11 +65,12 @@ def create_diagram(output_path: str = "docs/assets/methodology.png") -> None:
     phase(ax, 0.5, "PHASE 1: Domain Translation", "Unpaired, unsupervised GAN", "#E8EAF6", "#3F51B5", blue, "#5C6BC0")
     box(
         ax, (0.8, 4.9), 2.3, 1.7, "Source Domain",
-        "C-NMC\nSegmented single cells\nLabelled (ALL / Normal)", "#FFFFFF", "#3949AB", "#283593",
+        "C-NMC segmented cells\nLabelled (ALL / Normal)\nPasted onto real\ntarget backgrounds",
+        "#FFFFFF", "#3949AB", "#283593",
     )  # fmt: skip
     box(
         ax, (0.8, 2.1), 2.3, 1.7, "Target Domain",
-        "ALL-IDB\nCells with blood background\nLabels never used by the classifier", "#FFFFFF", "#3949AB", "#283593",
+        "ALL-IDB cells with\nblood background\nLabels never used\nby the classifier", "#FFFFFF", "#3949AB", "#283593",
     )  # fmt: skip
     box(
         ax, (3.45, 4.9), 2.25, 1.7, "Attention Generator",
@@ -77,12 +78,14 @@ def create_diagram(output_path: str = "docs/assets/methodology.png") -> None:
         "#C5CAE9", blue, blue, body_color="#283593", lw=2,
     )  # fmt: skip
     box(
-        ax, (3.45, 2.1), 2.25, 1.7, "Masked Discriminator",
-        "PatchGAN\nCompares attention-masked\ntranslated and real target images",
+        ax, (3.45, 2.1), 2.25, 1.7, "PatchGAN Discriminator",
+        "Compares whole translated\nand real target images",
         "#FFCDD2", red, "#B71C1C",
     )  # fmt: skip
     arrow(ax, (3.1, 5.75), (3.45, 5.75), blue)
     arrow(ax, (3.1, 2.95), (3.45, 2.95), red)
+    arrow(ax, (1.95, 3.8), (1.95, 4.9), "#3949AB", linestyle="--")
+    ax.text(2.02, 4.35, "cell-free\nbackground\npatches", fontsize=7.5, ha="left", va="center", color="#3949AB")
     arrow(ax, (4.575, 3.8), (4.575, 4.9), "#D32F2F", style="<->", linestyle=":")
     ax.text(4.65, 4.35, "Adversarial +\ncycle-consistency +\npixel loss", fontsize=7.5, fontweight="bold",
             ha="left", va="center", color=red)  # fmt: skip

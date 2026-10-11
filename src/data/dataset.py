@@ -10,6 +10,8 @@ import torchvision.transforms as T
 from PIL import Image
 from torch.utils.data import Dataset
 
+from src.data.backgrounds import composite_on_background, load_background_paths
+
 
 def get_default_transform(image_size: int = 128, is_train: bool = True) -> Callable:
     """Return standard image transformations for training/testing.
@@ -47,6 +49,7 @@ class UnpairedLeukemiaDataset(Dataset):
         target_dir: str,
         transform: Callable | None = None,
         balance_target_classes: bool = False,
+        background_dir: str | None = None,
     ) -> None:
         """Initialize Unpaired Dataset.
 
@@ -57,6 +60,8 @@ class UnpairedLeukemiaDataset(Dataset):
             balance_target_classes: Pad the minority target class ('all'/'hem' subfolders) with horizontally flipped
                 copies up to the majority count, as in Baydilli (2025) Section 5.1.2 (paper: 410 ALL + 249 Normal ->
                 410 ALL + 410 Normal; here 410 ALL + 25 Normal -> 410 + 410).
+            background_dir: Optional bank of target background patches; when given, every source cell is pasted onto
+                a randomly drawn patch before the transform.
         """
         self.source_paths = self._load_image_paths(source_dir)
         target_paths = self._load_image_paths(target_dir)
@@ -75,6 +80,7 @@ class UnpairedLeukemiaDataset(Dataset):
             deficit = len(majority) - len(minority)
             self.target_items += [(minority[i % len(minority)], True) for i in range(deficit)]
 
+        self.backgrounds = load_background_paths(background_dir) if background_dir else []
         self.transform = transform or get_default_transform(image_size=128, is_train=True)
 
     @staticmethod
@@ -98,6 +104,8 @@ class UnpairedLeukemiaDataset(Dataset):
         target_path, flip_target = self.target_items[random.randint(0, len(self.target_items) - 1)]
 
         img_s = Image.open(self.source_paths[idx_s]).convert("RGB")
+        if self.backgrounds:
+            img_s = composite_on_background(img_s, Image.open(random.choice(self.backgrounds)))
         img_t = Image.open(target_path).convert("RGB")
         if flip_target:
             img_t = img_t.transpose(Image.Transpose.FLIP_LEFT_RIGHT)

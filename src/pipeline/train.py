@@ -1,8 +1,10 @@
-"""Main CLI Pipeline Runner for ALL-IDB Generalization Research.
+"""Training stages (`python main.py train`): GAN, source translation, classifier, and the comparison baselines.
 
-Provides commands to train Attention-CycleGAN, translate source images, train/evaluate the ResNet34 classifier
-across evaluation scenarios, and run the comparison baselines (source-only, Reinhard, target-supervised).
-All defaults follow the Baydilli (2025) protocol used for Scenario 1 (cell_level).
+Runs one stage (or all three) for one scenario, or one baseline (source-only, composite, Reinhard, target-supervised).
+
+Defaults follow Baydilli (2025) except for two modifications that keep the GAN from collapsing: source cells are pasted
+onto real ALL-IDB backgrounds before translation, and the discriminator compares whole images. The literal paper GAN
+is `--real_mask source --no_composite`.
 """
 
 import argparse
@@ -12,16 +14,25 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from src.data.backgrounds import write_composites
 from src.data.stain_norm import reinhard_normalize_dir
 from src.training.train_classifier import train_classifier
 from src.training.train_gan import train_attention_cyclegan
 from src.training.translate import translate_source_dataset
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Args:
+        argv: Argument list; defaults to sys.argv[1:].
+
+    Returns:
+        The parsed arguments.
+    """
     parser = argparse.ArgumentParser(
-        description="Attention-guided CycleGAN and Classifier Pipeline for Leukemia Diagnosis",
+        prog="python main.py train",
+        description="Attention-guided CycleGAN and classifier pipeline for leukemia diagnosis",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -42,7 +53,7 @@ def parse_args() -> argparse.Namespace:
         "--baseline",
         type=str,
         default=None,
-        choices=["source_only", "reinhard", "target_supervised"],
+        choices=["source_only", "composite", "reinhard", "target_supervised"],
         help="Baseline for --stage baseline",
     )
     parser.add_argument("--epochs_gan", type=int, default=200, help="Number of epochs for Attention-CycleGAN training")
@@ -55,12 +66,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda_gan", type=float, default=0.5, help="Adversarial loss weight")
     parser.add_argument("--lambda_cycle", type=float, default=10.0, help="Cycle-consistency loss weight")
     parser.add_argument("--lambda_pixel", type=float, default=1.0, help="Pixel loss ||s - s'||_1 weight")
+    parser.add_argument("--lambda_identity", type=float, default=0.0, help="Target identity loss weight (not in paper)")
     parser.add_argument(
         "--real_mask",
         type=str,
-        default="source",
-        choices=["source", "target", "none"],
-        help="Mask of the real D_T input: 'source' = s_a*t (paper Eq. 3), 'target' = t_a*t (UAIT), 'none' = full t",
+        default="none",
+        choices=["none", "source", "target"],
+        help="D_T inputs: 'none' = full t vs s' (modified), 'source' = s_a*t vs s_a*s' (paper Eq. 3), 'target' = t_a*t",
+    )
+    parser.add_argument(
+        "--no_composite",
+        action="store_true",
+        help="Translate the black-background source cells as in the paper instead of pasting them on target backgrounds",
     )
     parser.add_argument(
         "--no_target_balance",
@@ -86,20 +103,27 @@ def parse_args() -> argparse.Namespace:
         default="cuda" if torch.cuda.is_available() else "cpu",
         help="Execution device ('cuda' or 'cpu')",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.stage == "baseline" and args.baseline is None:
         parser.error("--stage baseline requires --baseline")
     return args
 
 
 def run_baseline(
-    args: argparse.Namespace, source_dir: str, source_val_dir: str, target_train_dir: str, target_test_dir: str
+    args: argparse.Namespace, source_dir: str, source_val_dir: str, target_dirs: tuple[str, str, str]
 ) -> None:
     """Train the selected baseline classifier and evaluate it once on the target test set."""
+    target_train_dir, target_test_dir, background_dir = target_dirs
     out_dir = f"checkpoints/baseline_{args.baseline}_{args.scenario}"
     train_dir, val_dir = source_dir, (source_val_dir if args.source_val else None)
 
-    if args.baseline == "reinhard":
+    if args.baseline == "composite":
+        train_dir = f"data/processed/composite_source/{args.scenario}/train"
+        write_composites(source_dir, train_dir, background_dir)
+        if val_dir:
+            val_dir = f"data/processed/composite_source/{args.scenario}/val"
+            write_composites(source_val_dir, val_dir, background_dir)
+    elif args.baseline == "reinhard":
         train_dir = f"data/processed/reinhard_source/{args.scenario}/train"
         reinhard_normalize_dir(source_dir, train_dir, target_train_dir)
         if val_dir:
@@ -121,9 +145,16 @@ def run_baseline(
     )
 
 
-def main() -> None:
-    """Execute selected pipeline stages."""
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    """Execute the selected stage or baseline.
+
+    Args:
+        argv: Argument list; defaults to sys.argv[1:].
+
+    Returns:
+        Process exit code.
+    """
+    args = parse_args(argv)
     device = args.device
     use_amp = not args.no_amp
 
@@ -136,6 +167,8 @@ def main() -> None:
     source_val_dir = "data/processed/source_cnmc/val"
     target_train_dir = f"data/processed/target_all_idb/{args.scenario}/train"
     target_test_dir = f"data/processed/target_all_idb/{args.scenario}/test"
+    background_dir = f"data/processed/target_all_idb/{args.scenario}/background"
+    gan_background_dir = None if args.no_composite else background_dir
     translated_dir = f"data/processed/translated_source/{args.scenario}/train"
     translated_val_dir = f"data/processed/translated_source/{args.scenario}/val"
     ckpt_gan_dir = f"checkpoints/cyclegan_{args.scenario}"
@@ -145,8 +178,8 @@ def main() -> None:
     print(f"Device: {device} | Mixed Precision (AMP): {use_amp}\n")
 
     if args.stage == "baseline":
-        run_baseline(args, source_dir, source_val_dir, target_train_dir, target_test_dir)
-        return
+        run_baseline(args, source_dir, source_val_dir, (target_train_dir, target_test_dir, background_dir))
+        return 0
 
     # Stage 1: Train Attention-CycleGAN
     if args.stage in ["gan", "all"]:
@@ -162,8 +195,10 @@ def main() -> None:
             lambda_gan=args.lambda_gan,
             lambda_cycle=args.lambda_cycle,
             lambda_pixel=args.lambda_pixel,
+            lambda_identity=args.lambda_identity,
             real_mask=args.real_mask,
             balance_target_classes=not args.no_target_balance,
+            background_dir=gan_background_dir,
             use_amp=use_amp,
             device=device,
         )
@@ -181,9 +216,7 @@ def main() -> None:
         print(f"Using GAN Checkpoint: {ckpt_path} (inspect preview_epoch_*.png to pick another with --checkpoint_gan)")
         pairs = [(source_dir, translated_dir)] + ([(source_val_dir, translated_val_dir)] if args.source_val else [])
         for src, dst in pairs:
-            translate_source_dataset(
-                checkpoint_path=ckpt_path, source_dir=src, output_dir=dst, image_size=128, device=device
-            )
+            translate_source_dataset(ckpt_path, src, dst, device=device, background_dir=gan_background_dir)
 
     # Stage 3: Train Classifier on translated images (last epoch, or best translated source-val epoch), test once
     if args.stage in ["classifier", "all"]:
@@ -198,7 +231,4 @@ def main() -> None:
             lr=args.lr_clf,
             device=device,
         )
-
-
-if __name__ == "__main__":
-    main()
+    return 0

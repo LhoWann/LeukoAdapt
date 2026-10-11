@@ -30,7 +30,8 @@ class AttentionCycleGAN(nn.Module):
         lambda_gan: float = 0.5,
         lambda_cycle: float = 10.0,
         lambda_pixel: float = 1.0,
-        real_mask: RealMask = "source",
+        lambda_identity: float = 0.0,
+        real_mask: RealMask = "none",
     ) -> None:
         """Initialize Attention-Guided CycleGAN.
 
@@ -40,16 +41,18 @@ class AttentionCycleGAN(nn.Module):
             lambda_gan: Weight of the adversarial loss, Eq. (8).
             lambda_cycle: Weight of the cycle-consistency loss ||s - s''||_1, Eq. (4).
             lambda_pixel: Weight of the pixel loss ||s - s'||_1, Eq. (5).
-            real_mask: Mask applied to the real target image fed to D_T; the fake is always s_a * s'. "source" is the
-                literal Eq. (3), s_a * t. It has a degenerate optimum: s_a = 0 makes both discriminator inputs zero and
-                gives s' = s, and on C-NMC -> ALL-IDB it collapses there within one epoch even with lambda_pixel = 0.
-                "target" masks t with its own attention map t_a = A_T(t, F(t)) as in UAIT [21]; "none" feeds the
-                full t. Both are documented deviations from the paper.
+            lambda_identity: Weight of the CycleGAN identity loss ||t - A_S(t, G(t))||_1 on target images (not in
+                the paper).
+            real_mask: Discriminator inputs. "source" is the literal Eq. (3): s_a * t vs s_a * s'. It has a degenerate
+                optimum: s_a = 0 makes both inputs zero and gives s' = s, and on C-NMC -> ALL-IDB it collapses there
+                within one epoch even with lambda_pixel = 0. "target" uses t_a * t vs s_a * s' with t_a = A_T(t, F(t))
+                as in UAIT [21]. "none" compares the full images t vs s', as in CycleGAN.
         """
         super().__init__()
         self.lambda_gan = lambda_gan
         self.lambda_cycle = lambda_cycle
         self.lambda_pixel = lambda_pixel
+        self.lambda_identity = lambda_identity
         self.real_mask = real_mask
 
         self.gen_s2t = AttentionGenerator(in_channels, in_channels, num_res_blocks)
@@ -61,6 +64,7 @@ class AttentionCycleGAN(nn.Module):
         self.criterion_gan = nn.MSELoss()
         self.criterion_cycle = nn.L1Loss()
         self.criterion_pixel = nn.L1Loss()
+        self.criterion_identity = nn.L1Loss()
 
     def forward_source(self, real_s: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Translate source image to target domain and recover it (Algorithm 4, lines 2-5).
@@ -78,17 +82,19 @@ class AttentionCycleGAN(nn.Module):
     def compute_generator_loss(
         self,
         real_s: torch.Tensor,
+        real_t: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, float], tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Compute the generator objective of Eq. (6) with the least-squares adversarial term of Eq. (8).
 
         Args:
             real_s: Real source image batch.
+            real_t: Real target image batch, required when lambda_identity > 0.
 
         Returns:
-            Tuple of (total_loss, loss_dict, (masked_fake s_a * s', fake_t s', s_a)).
+            Tuple of (total_loss, loss_dict, (discriminator fake input, fake_t s', s_a)).
         """
         fake_t, s_a, recovered_s = self.forward_source(real_s)
-        masked_fake = s_a * fake_t
+        masked_fake = fake_t if self.real_mask == "none" else s_a * fake_t
 
         pred_fake = self.disc_t(masked_fake)
         loss_gan = self.criterion_gan(pred_fake, torch.ones_like(pred_fake))
@@ -96,6 +102,13 @@ class AttentionCycleGAN(nn.Module):
         loss_pixel = self.criterion_pixel(fake_t, real_s)
 
         total_loss = self.lambda_gan * loss_gan + self.lambda_cycle * loss_cycle + self.lambda_pixel * loss_pixel
+        loss_identity = torch.zeros((), device=real_s.device)
+        if self.lambda_identity > 0:
+            if real_t is None:
+                raise ValueError("lambda_identity > 0 needs real_t")
+            identity_t, _ = self.attn_s(real_t, self.gen_s2t(real_t))
+            loss_identity = self.criterion_identity(identity_t, real_t)
+            total_loss = total_loss + self.lambda_identity * loss_identity
 
         with torch.no_grad():
             loss_dict = {
@@ -103,6 +116,7 @@ class AttentionCycleGAN(nn.Module):
                 "loss_gan": loss_gan.item(),
                 "loss_cycle": loss_cycle.item(),
                 "loss_pixel": loss_pixel.item(),
+                "loss_identity": loss_identity.item(),
                 "mask_mean": s_a.mean().item(),
                 "translation_delta": (fake_t - real_s).abs().mean().item(),
                 "fake_dark_fraction": (fake_t.max(dim=1).values < DARK_THRESHOLD).float().mean().item(),
@@ -136,8 +150,8 @@ class AttentionCycleGAN(nn.Module):
 
         Args:
             masked_real_t: Masked real target batch from mask_real_target.
-            masked_fake_buffered: Masked fake batch s_a * s', sampled from the history buffer. The buffer stores masked
-                images so every fake keeps the mask it was generated with.
+            masked_fake_buffered: Fake batch as fed to D_T (s_a * s', or s' for real_mask "none"), sampled from the
+                history buffer. The buffer stores the masked images so every fake keeps the mask it was generated with.
 
         Returns:
             Tuple of (loss_d, loss_dict).

@@ -50,3 +50,6 @@ data/raw/
 .DS_Store
 Thumbs.db
 *.log
+
+# Final evaluation reports
+reports/

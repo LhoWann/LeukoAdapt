@@ -9,7 +9,7 @@
 [![Code Style: Ruff](https://img.shields.io/badge/Code%20Style-Ruff-000000.svg?style=flat&logo=ruff&logoColor=white)](https://github.com/astral-sh/ruff)
 
 <p align="center">
-  Framework PyTorch yang menerjemahkan leukosit C-NMC hasil segmentasi ke dalam gaya visual apusan darah ALL-IDB menggunakan CycleGAN berpanduan atensi, kemudian melatih classifier yang diuji pada sel ALL-IDB asli yang belum pernah dilihatnya.
+  Framework PyTorch yang mentranslasikan leukosit C-NMC tersegmentasi ke dalam gaya visual apusan darah ALL-IDB menggunakan CycleGAN berpanduan atensi, kemudian melatih classifier yang diuji pada sel ALL-IDB asli yang belum pernah dilihatnya.
 </p>
 
 <p align="center"><a href="README.md">English</a> | <b>Bahasa Indonesia</b></p>
@@ -19,10 +19,10 @@
 ---
 
 > [!NOTE]
-> Repositori ini mereproduksi, sekaligus mengaudit, metode dari
+> Repositori ini merupakan **versi modifikasi** dari metode
 > **Yusuf Yargı Baydilli (2025)**, *"Unsupervised attention-guided domain adaptation model for Acute Lymphocytic Leukemia (ALL) diagnosis"*, **Biomedical Signal Processing and Control**, Vol. 101, 107159. [DOI: 10.1016/j.bspc.2024.107159](https://doi.org/10.1016/j.bspc.2024.107159).
 >
-> **Skenario 1** mengikuti paper sedekat yang dimungkinkan oleh data. **Skenario 2** adalah split yang lebih ketat dan bebas kebocoran data yang ditambahkan oleh repositori ini. Setiap bagian di mana paper tidak dapat diikuti secara harfiah dicantumkan di [Bagian 5](#5-catatan-reproduksi-penyimpangan-dari-paper).
+> Jika diimplementasikan persis seperti yang tertulis, GAN pada paper mengalami collapse menjadi identity mapping pada data ini. Dua perubahan membuatnya berfungsi (sel sumber ditempelkan pada latar belakang ALL-IDB asli, dan discriminator yang melihat citra secara utuh); selebihnya mengikuti paper. GAN versi paper secara harfiah tetap tersedia melalui `--real_mask source --no_composite`. **Skenario 1** menggunakan protokol evaluasi paper; **Skenario 2** merupakan split yang lebih ketat dan bebas kebocoran. Seluruh penyimpangan dicantumkan di [Bagian 5](#5-catatan-reproduksi-penyimpangan-dari-paper).
 
 ---
 
@@ -46,7 +46,7 @@
 
 ### A. Masalah: Pergeseran Domain Antar-Laboratorium
 
-Classifier yang dilatih pada citra apusan darah dari satu laboratorium biasanya mengalami penurunan kinerja pada citra dari laboratorium lain, karena distribusi marginalnya berbeda ($P(X_s) \neq P(X_t)$):
+Classifier yang dilatih pada citra apusan darah dari satu laboratorium umumnya mengalami penurunan kinerja pada citra dari laboratorium lain, karena distribusi marginalnya berbeda ($P(X_s) \neq P(X_t)$):
 - optik mikroskop dan perangkat keras kamera;
 - durasi pewarnaan Jenner-Giemsa dan batch reagen;
 - latar belakang: sel C-NMC disegmentasi di atas latar hitam, sedangkan sel ALL-IDB berada di antara sel darah merah.
@@ -56,7 +56,7 @@ Pelabelan dataset baru untuk setiap laboratorium memerlukan biaya besar, sehingg
 ### B. Pendekatan
 
 > [!TIP]
-> **Analogi.** Kios A (C-NMC) menjual apel yang sudah dicuci di atas nampan bersih; Kios B (ALL-IDB) menjual apel yang sama di dalam keranjang jerami. Penyortir yang hanya dilatih di Kios A akan gagal di Kios B. GAN berperan sebagai adaptor yang mengemas ulang apel Kios A agar tampak seperti apel Kios B, tanpa mengubah apelnya sendiri, sehingga penyortir dapat dilatih dengan data berlabel dari Kios A dan tetap bekerja di Kios B.
+> **Analogi.** Lapak A (C-NMC) menjual apel yang sudah dicuci di atas nampan bersih; Lapak B (ALL-IDB) menjual apel yang sama di dalam keranjang jerami. Alat penyortir yang hanya dilatih di Lapak A akan gagal di Lapak B. GAN berperan sebagai adaptor yang mengemas ulang apel Lapak A agar tampak seperti apel Lapak B, tanpa mengubah apelnya sendiri, sehingga penyortir dapat dilatih dengan data berlabel dari Lapak A dan tetap berfungsi di Lapak B.
 
 ---
 
@@ -69,29 +69,31 @@ Pelabelan dataset baru untuk setiap laboratorium memerlukan biaya besar, sehingg
 
 ### Fase 1: Translasi Domain Berpanduan Atensi (GAN)
 
-- **Tujuan**: menerjemahkan sel sumber C-NMC berlabel ($s$) ke dalam gaya domain target ALL-IDB ($t$) tanpa mengubah diagnosisnya.
-- **Generator berpanduan atensi ($G_{S \to T}$, $A_S$)**: sebuah encoder dengan atensi spasial setelah setiap blok konvolusi, enam residual block, dan sebuah decoder dengan skip connection menghasilkan citra konten $G(s)$. Modul atensi menghitung mask satu kanal dari citra tersebut, $s_a = \sigma\big(f_{7\times7}([\mathrm{AvgPool}(G(s)); \mathrm{MaxPool}(G(s))])\big)$, lalu memadukan:
+- **Tujuan**: mentranslasikan sel sumber C-NMC berlabel ($s$) ke dalam gaya domain target ALL-IDB ($t$) tanpa mengubah diagnosisnya.
+- **Komposit latar belakang** (modifikasi): setiap sel sumber ditempelkan pada patch latar belakang ALL-IDB asli yang bebas sel sebelum translasi ([Bagian 3.E](#e-bank-latar-target)), sehingga GAN mengadaptasi sel tersebut alih-alih mencoba melukis sel darah merah ke area hitam.
+- **Generator berpanduan atensi ($G_{S \to T}$, $A_S$)**: encoder dengan spatial attention setelah setiap blok konvolusi, enam residual block, dan decoder dengan skip connection menghasilkan citra konten $G(s)$. Modul atensi menghitung attention mask satu kanal darinya, $s_a = \sigma\big(f_{7\times7}([\mathrm{AvgPool}(G(s)); \mathrm{MaxPool}(G(s))])\big)$, lalu memadukan:
 
   $$s' = s_a \odot G_{S \to T}(s) + (1 - s_a) \odot s$$
 
-- **Cycle**: $F_{T \to S}$ dan $A_T$ memetakan $s'$ kembali ke $s''$. Hanya cycle $S \to T \to S$ dan discriminator target yang dilatih, sesuai dengan paper.
-- **Discriminator PatchGAN ber-mask ($D_T$)**: membandingkan citra asli ber-mask $s_a \odot t$ dengan citra hasil translasi ber-mask $s_a \odot s'$ (Pers. 3). History buffer berukuran 50 citra menyimpan citra palsu yang sudah di-mask, sehingga setiap citra palsu tetap membawa mask yang digunakan saat citra tersebut dibangkitkan.
-- **Fungsi objektif**: $\mathcal{L} = 0.5\,\mathcal{L}_{AGAN} + 10\,\lVert s - s'' \rVert_1 + 1\,\lVert s - s' \rVert_1$, dengan suku adversarial least-squares dan loss discriminator yang dibagi dua. Suku piksel tersebut merupakan self-regularisation SimGAN yang dirujuk oleh paper (ref. [105]).
-- **Pelatihan**: 200 epoch, Adam ($\beta_1 = 0.5$, $\beta_2 = 0.999$), learning rate $10^{-4}$ yang menurun secara linear menuju 0 mulai epoch 100, augmentasi horizontal flip, serta kelas target yang diseimbangkan menjadi 1:1 dengan salinan hasil flip (paper Bagian 5.1.2).
-- **Pemilihan checkpoint**: sebuah checkpoint dan preview grid (sumber / $s'$ / $s_a$) disimpan setiap 5 epoch. Paper mempertahankan checkpoint yang secara visual terbaik; berikan checkpoint tersebut melalui `--checkpoint_gan`.
+- **Cycle**: $F_{T \to S}$ dan $A_T$ memetakan $s'$ kembali ke $s''$. Hanya cycle $S \to T \to S$ dan discriminator target yang dilatih, sesuai paper.
+- **Discriminator PatchGAN ($D_T$)** (modifikasi): membandingkan citra hasil translasi $s'$ secara utuh dengan citra target asli $t$ secara utuh. Pers. 3 pada paper membandingkan $s_a \odot s'$ dengan $s_a \odot t$, yang memiliki optimum degeneratif ([Bagian 5.A](#a-mengapa-gan-dimodifikasi)). History buffer berisi 50 citra menstabilkan discriminator.
+- **Fungsi objektif** (sesuai paper): $\mathcal{L} = 0.5\,\mathcal{L}_{GAN} + 10\,\lVert s - s'' \rVert_1 + 1\,\lVert s - s' \rVert_1$, dengan suku adversarial least-squares dan loss discriminator dibagi dua. Suku piksel merupakan self-regularisation SimGAN yang dikutip oleh paper (ref. [105]).
+- **Pelatihan** (sesuai paper): 200 epoch, Adam ($\beta_1 = 0.5$, $\beta_2 = 0.999$), learning rate $10^{-4}$ yang meluruh secara linear hingga 0 mulai epoch 100, augmentasi horizontal flip, serta kelas target diseimbangkan menjadi 1:1 dengan salinan hasil flip (Bagian 5.1.2 paper).
+- **Pemilihan checkpoint**: checkpoint dan preview grid (sumber komposit / $s'$ / $s_a$) disimpan setiap 5 epoch. Paper mempertahankan checkpoint yang secara visual terbaik; berikan checkpoint tersebut melalui `--checkpoint_gan`. Sebuah `WARNING` akan dicetak jika translasi mengalami collapse ($s' \approx s$).
 
 ### Fase 2: Pelatihan Classifier pada Sumber Hasil Translasi
 
 - **Data**: 2,000 citra C-NMC hasil translasi $s'$, masing-masing mewarisi label dari citra sumbernya ($Y_s \in \{\text{ALL}, \text{Normal}\}$).
 - **Model**: ResNet34 dengan bobot ImageNet.
 - **Pelatihan**: 50 epoch, Adam, learning rate $10^{-3}$, batch size 32, cross-entropy, tanpa weight decay.
-- **Pemilihan model**: epoch terakhir, sesuai dengan paper. Sebagai alternatif, `--source_val` memilih epoch berdasarkan sel C-NMC `fold_2` hasil translasi; data target tidak pernah digunakan untuk pemilihan.
+- **Pemilihan model**: epoch terakhir, sesuai paper. Sebagai alternatif, `--source_val` memilih epoch berdasarkan sel C-NMC `fold_2` hasil translasi; data target tidak pernah digunakan untuk pemilihan.
 
 ### Fase 3: Evaluasi Buta pada Domain Target
 
-- Classifier dijalankan satu kali pada sel uji ALL-IDB asli tanpa modifikasi yang belum pernah dilihatnya.
-- `results.json` menyimpan TN, TP, FP, FN, akurasi beserta interval Wilson 95%, balanced accuracy, presisi, recall, spesifisitas, NPV, F-score, AUROC, angka yang sama dalam konvensi kolom Tabel 5 paper ([Bagian 5.B](#b-label-metrik-tabel-5)), serta prediksi per citra untuk McNemar test.
-- **Referensi terpublikasi** (paper Tabel 5, model yang diusulkan, protokol Skenario 1): TN = 91, TP = 87, akurasi 0.8900, F-score 0.8878.
+- Classifier dijalankan satu kali pada sel test ALL-IDB asli tanpa modifikasi yang belum pernah dilihatnya.
+- `results.json` menyimpan TN, TP, FP, FN, akurasi beserta interval Wilson 95%, balanced accuracy, precision, recall, spesifisitas, NPV, F-score, AUROC, angka yang sama dalam konvensi kolom Tabel 5 paper ([Bagian 5.B](#b-label-metrik-tabel-5)), serta prediksi per citra.
+- `python main.py evaluate` menghimpun seluruh run ke dalam satu tabel perbandingan dan menjalankan McNemar test berpasangan, sesuai Bagian 5.1.3 paper.
+- **Referensi terpublikasi** (Tabel 5 paper, model yang diusulkan, protokol Skenario 1): TN = 91, TP = 87, akurasi 0.8900, F-score 0.8878.
 
 ---
 
@@ -99,33 +101,33 @@ Pelabelan dataset baru untuk setiap laboratorium memerlukan biaya besar, sehingg
 
 ### A. Domain Sumber: C-NMC 2019
 
-Data training ISBI 2019 C-NMC berisi 10,661 sel tunggal tersegmentasi dalam tiga fold yang terpisah berdasarkan subject (subject-disjoint). Paper menggunakan 1,000 citra ALL + 1,000 citra Normal (HEM) tanpa menyebutkan fold-nya; repositori ini mengambil sampel dari `fold_0` secara bergiliran antar-subject sehingga tidak ada subject yang mendominasi (19 subject ALL dan 9 subject HEM terwakili).
+Data latih ISBI 2019 C-NMC berisi 10,661 sel tunggal tersegmentasi yang terbagi dalam tiga fold dengan subject yang saling terpisah. Paper menggunakan 1,000 citra ALL + 1,000 citra Normal (HEM) tanpa menyebutkan fold yang dipakai; repositori ini mengambil sampel tersebut dari `fold_0` secara bergiliran antar-subject sehingga tidak ada subject yang mendominasi (19 subject ALL dan 9 subject HEM terwakili).
 
 | Fold | ALL | HEM | Penggunaan |
 | :--- | :---: | :---: | :--- |
-| `fold_0` | 2,397 | 1,130 | 1,000 ALL + 1,000 HEM **sumber training** |
+| `fold_0` | 2,397 | 1,130 | 1,000 ALL + 1,000 HEM **sumber pelatihan** |
 | `fold_1` | 2,418 | 1,163 | Tidak digunakan |
-| `fold_2` | 2,457 | 1,096 | 500 ALL + 500 HEM validasi opsional untuk `--source_val` (subject-disjoint terhadap data training) |
+| `fold_2` | 2,457 | 1,096 | 500 ALL + 500 HEM validasi opsional untuk `--source_val` (subject terpisah dari data pelatihan) |
 
 ### B. Domain Target: Gambar ALL-IDB1, Hanya Anotasi Ahli
 
-Seluruh patch target di-crop dari slide **ALL-IDB1** dengan satu prosedur yang sama (crop 257 x 257 yang berpusat pada centroid nukleus hasil penyempurnaan, lalu resize bikubik ke 128 x 128). Setiap label berasal dari anotasi dataset itu sendiri:
+Seluruh patch target di-crop dari slide **ALL-IDB1** dengan satu prosedur yang sama (crop 257 x 257 yang berpusat pada centroid nukleus yang telah diperhalus, kemudian resize bikubik ke 128 x 128). Setiap label berasal dari anotasi dataset itu sendiri:
 
 | Kelas | Sumber anotasi | Sel | Slide |
 | :--- | :--- | :---: | :---: |
 | ALL (blast) | Centroid blast `.xyc` ALL-IDB1 | 510 | 49 slide ALL |
-| Normal | Crop `*_0.tif` ALL-IDB2 (*"the cell placed in the center of the image is not a blast"*, individu sehat), yang lokasinya pada slide sumber ALL-IDB1 ditemukan dengan template matching | 125 | 58 slide sehat |
+| Normal | Crop ALL-IDB2 `*_0.tif` (*"the cell placed in the center of the image is not a blast"*, individu sehat), yang dilokalisasi pada slide sumber ALL-IDB1-nya dengan template matching | 125 | 58 slide sehat |
 
-- **ALL-IDB2 hanya digunakan sebagai anotasi.** Template matching mengonfirmasi bahwa seluruh 260 crop ALL-IDB2 dipotong dari slide ALL-IDB1 (korelasi ternormalisasi > 0.9 untuk setiap crop). Menambahkannya sebagai citra tambahan akan menduplikasi sel, dan meng-crop kedua kelas dari JPEG ALL-IDB1 yang sama mencegah classifier membedakan kelas berdasarkan format file (ALL-IDB2 berformat TIFF).
+- **ALL-IDB2 hanya digunakan sebagai anotasi.** Template matching memastikan bahwa seluruh 260 crop ALL-IDB2 dipotong dari slide ALL-IDB1 (korelasi ternormalisasi > 0.9 untuk setiap crop). Menambahkannya sebagai citra tambahan akan menduplikasi sel, dan melakukan crop kedua kelas dari JPEG ALL-IDB1 yang sama mencegah classifier memisahkan kelas berdasarkan format file (ALL-IDB2 berformat TIFF).
 - **Duplikat dihapus.** `Im108_0.jpg` pada ALL-IDB1 merupakan salinan identik per piksel dari `Im093_0.jpg` dan tidak pernah digunakan. Lima crop Normal ALL-IDB2 mengulang sel yang sama (`Im222`-`Im227` vs `Im256`-`Im260`), sehingga 130 crop tersebut berisi 125 sel unik.
-- **Provenans** (slide sumber, centroid, nama file ALL-IDB2, skor kecocokan, pembagian split) dicatat dalam [metadata_target_cells.json](data/processed/target_all_idb/metadata_target_cells.json).
+- **Asal-usul data** (slide sumber, centroid, nama file ALL-IDB2, skor kecocokan, penetapan split) dicatat dalam `data/processed/target_all_idb/metadata_target_cells.json`.
 
 ### C. Sel Normal: Mengapa 125, Bukan 349 seperti di Paper
 
 > [!IMPORTANT]
-> Paper melaporkan 510 sel ALL + 349 sel Normal (Tabel 1) tanpa menyebutkan asal sel Normal tersebut. ALL-IDB1 hanya menganotasi blast, dan slide sehatnya hanya memuat sedikit sel darah putih: detektor berbasis pewarnaan menemukan sekitar 106 objek berukuran leukosit di sana, 98 di antaranya sudah termasuk dalam 125 sel ALL-IDB2. Dari 8 sisanya, dua merupakan gumpalan platelet, satu merupakan sepasang neutrofil yang saling bersentuhan, tiga berada pada slide duplikat `Im108_0`, dan dua tampak sebagai leukosit yang valid (`Im090_0`, `Im091_0`) tetapi tidak memiliki label dataset. **ALL-IDB tidak memiliki sumber 349 sel Normal yang berlabel benar**, sehingga repositori ini menggunakan 125 sel yang dilabeli oleh ahli.
+> Paper melaporkan 510 sel ALL + 349 sel Normal (Tabel 1) tanpa menyebutkan asal sel Normal tersebut. ALL-IDB1 hanya menganotasi blast, dan slide sehatnya hanya memuat sedikit sel darah putih: detektor berbasis pewarnaan menemukan sekitar 106 objek berukuran leukosit di sana, dan 98 di antaranya sudah termasuk dalam 125 sel ALL-IDB2. Dari 8 sisanya, dua merupakan gumpalan platelet, satu merupakan sepasang neutrofil yang saling bersentuhan, tiga terletak pada slide duplikat `Im108_0`, dan dua tampak seperti leukosit yang valid (`Im090_0`, `Im091_0`) tetapi tidak memiliki label dataset. **ALL-IDB tidak memuat sumber 349 sel Normal yang berlabel benar**, sehingga repositori ini menggunakan 125 sel yang dilabeli oleh ahli.
 
-**Rekonstruksi sebelumnya tidak andal.** Versi sebelumnya memenuhi 349 sel Normal dengan menjalankan detektor pewarnaan pada slide sehat (162 deteksi) lalu pada slide ALL di area yang jauh dari blast teranotasi (187 deteksi). Tiga puluh patch dengan jarak merata dari masing-masing sumber diperiksa (pemeriksaan visual oleh non-ahli):
+**Rekonstruksi sebelumnya tidak andal.** Versi sebelumnya mengisi 349 sel Normal dengan menjalankan detektor pewarnaan pada slide sehat (162 deteksi), kemudian pada slide ALL di area yang jauh dari blast teranotasi (187 deteksi). Tiga puluh patch dengan jarak seragam dari setiap sumber diperiksa (pemeriksaan visual oleh non-ahli):
 
 <p align="center">
   <img src="docs/assets/normal_cells_healthy_slides.png" alt="Patch Normal lama dari slide sehat" width="100%" />
@@ -134,7 +136,7 @@ Seluruh patch target di-crop dari slide **ALL-IDB1** dengan satu prosedur yang s
 
 <p align="center">
   <img src="docs/assets/normal_cells_all_slides.png" alt="Patch Normal lama dari slide ALL" width="100%" />
-  <br><em>Gambar 3. Rekonstruksi lama, slide ALL (sampel 30, bernomor). Sebagian besar berupa smudge cell, sel menyerupai blast, dan panah anotasi (6, 7, 16), yang tidak dapat dijamin normal karena berasal dari slide pasien.</em>
+  <br><em>Gambar 3. Rekonstruksi lama, slide ALL (sampel 30, bernomor). Sebagian besar berupa smudge cell, sel yang menyerupai blast, dan panah anotasi (6, 7, 16), yang kenormalannya tidak dapat dijamin karena berasal dari slide pasien.</em>
 </p>
 
 | Sumber patch Normal lama | Leukosit utuh | Platelet / fragmen | Smudge / sel rusak | Sel menyerupai blast | Panah anotasi / kosong | Ambigu |
@@ -142,7 +144,7 @@ Seluruh patch target di-crop dari slide **ALL-IDB1** dengan satu prosedur yang s
 | Slide sehat (162) | 17 / 30 | 13 / 30 | 0 | 0 | 0 | 0 |
 | Slide ALL (187) | 5 / 30 | 0 | 12 / 30 | 6 / 30 | 5 / 30 | 2 / 30 |
 
-**Set Normal saat ini** hanya menggunakan sel yang dilabeli oleh penulis dataset. Setiap patch berpusat pada sel yang dianotasi. Sekitar 27 di antaranya merupakan sel kecil dan pucat; sel-sel tersebut tetap dipertahankan karena dataset melabelinya sebagai "bukan blast", dan tidak ada label yang diubah berdasarkan penilaian subjektif dalam repositori ini.
+**Set Normal saat ini** hanya menggunakan sel yang dilabeli oleh penyusun dataset. Setiap patch berpusat pada sel yang dianotasi. Sekitar 27 di antaranya merupakan sel kecil dan pucat; sel-sel tersebut tetap dipertahankan karena dataset melabelinya sebagai "not a blast", dan tidak ada label yang diubah berdasarkan penilaian subjektif dalam repositori ini.
 
 <p align="center">
   <img src="docs/assets/normal_cells_final_idb2.png" alt="Seluruh 125 patch Normal yang digunakan" width="100%" />
@@ -153,29 +155,41 @@ Seluruh patch target di-crop dari slide **ALL-IDB1** dengan satu prosedur yang s
 
 | Domain | Partisi | ALL | Normal | Total | Peran |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| Sumber | `source_cnmc/train` | 1,000 | 1,000 | **2,000** | Citra berlabel yang ditranslasikan oleh GAN; data training classifier |
+| Sumber | `source_cnmc/train` | 1,000 | 1,000 | **2,000** | Citra berlabel yang ditranslasikan oleh GAN; data pelatihan classifier |
 | Sumber | `source_cnmc/val` | 500 | 500 | **1,000** | Validasi opsional (`--source_val`) |
 | Target, Skenario 1 | `target_all_idb/cell_level/train` | 410 | 25 | **435** | Pool target GAN |
-| Target, Skenario 1 | `target_all_idb/cell_level/test` | 100 | 100 | **200** | Set test buta (protokol paper) |
+| Target, Skenario 1 | `target_all_idb/cell_level/test` | 100 | 100 | **200** | Set uji buta (protokol paper) |
+| Target, Skenario 1 | `target_all_idb/cell_level/background` | - | - | **640** | Bank latar |
 | Target, Skenario 2 | `target_all_idb/slide_level/train` | 382 | 95 | **477** | Pool target GAN |
-| Target, Skenario 2 | `target_all_idb/slide_level/test` | 113 | 25 | **138** | Set test buta pada kelompok slide yang belum pernah dilihat |
+| Target, Skenario 2 | `target_all_idb/slide_level/test` | 113 | 25 | **138** | Set uji buta pada kelompok slide yang belum pernah dilihat |
+| Target, Skenario 2 | `target_all_idb/slide_level/background` | - | - | **889** | Bank latar |
 
-Label target hanya digunakan untuk menyeimbangkan pool target GAN melalui flip, sebagaimana dalam paper; classifier tidak pernah melihatnya.
+Label target hanya digunakan untuk menyeimbangkan pool target GAN melalui flip, sebagaimana dalam paper; classifier tidak pernah melihat label tersebut.
+
+### E. Bank Latar Target
+
+Untuk setiap skenario, [backgrounds.py](src/data/backgrounds.py) melakukan crop patch 257 x 257 dari slide pada **sisi pelatihan** split skenario tersebut (hingga 12 per slide), dan hanya mempertahankan patch apabila pusatnya berjarak minimal 220 px dari setiap sel teranotasi serta tidak mengandung pewarnaan menyerupai nukleus maupun panah anotasi berwarna oranye. Setiap sel sumber kemudian ditempelkan pada sebuah patch: mask sel adalah area non-hitam dari citra C-NMC tersegmentasi, yang dierosi sebesar 2 px (tepi segmentasi hasil resize bercampur dengan warna hitam) dan diberi feathering sebesar 1 px. Selama pelatihan GAN, patch dipilih secara acak; untuk translasi dan untuk baseline `composite`, patch dipilih secara deterministik berdasarkan nama file, sehingga hasilnya dapat direproduksi.
+
+<p align="center">
+  <img src="docs/assets/composite_examples.png" alt="Sel C-NMC beserta kompositnya" width="100%" />
+  <br><em>Gambar 5. Atas: sel C-NMC tersegmentasi (empat ALL, empat Normal). Bawah: sel yang sama ditempelkan pada patch latar ALL-IDB, yang menjadi input GAN.</em>
+</p>
 
 ---
 
 ## 4. Skenario Evaluasi
 
-Kedua skenario menjalankan GAN, translasi, dan classifier yang persis sama; hanya split target yang berbeda. Selisih antara hasil keduanya memperkirakan seberapa besar split tingkat sel membuat metode tampak lebih baik daripada yang sebenarnya.
+Kedua skenario menjalankan GAN, translasi, dan classifier yang persis sama; hanya split target (dan karenanya bank latar belakang) yang berbeda. Selisih antara hasil keduanya memperkirakan seberapa jauh split tingkat sel membuat metode tampak lebih baik daripada sebenarnya.
 
 ### A. Skenario 1: Split Tingkat Sel (Protokol Paper)
 
 - Split acak terstratifikasi dengan seed atas **sel**: 100 ALL + 100 Normal untuk pengujian, seperti dalam paper; sisanya, 410 ALL + 25 Normal, membentuk pool target GAN (paper: 249 Normal, lihat [Bagian 3.C](#c-sel-normal-mengapa-125-bukan-349-seperti-di-paper)).
-- Seluruh 510 blast `.xyc` dipertahankan, seperti dalam paper. Oleh karena itu, sel dari satu foto dapat jatuh ke kedua sisi, dan 5 sel fisik yang difoto dua kali memiliki satu salinan di train dan satu salinan di test.
+- Seluruh 510 blast `.xyc` dipertahankan, seperti dalam paper. Oleh karena itu, sel dari satu foto dapat berada di kedua sisi, dan 5 sel fisik yang difoto dua kali memiliki satu salinan di train dan satu di test. Patch latar belakang tidak pernah memuat sel teranotasi.
+- Classifier menggunakan epoch terakhir, seperti dalam paper.
 
 ### B. Skenario 2: Split Grup Slide (Bebas Kebocoran)
 
-**1. Bidang pandang yang tumpang tindih dikelompokkan.** ALL-IDB1 berisi foto-foto bidang yang tumpang tindih dari apusan yang sama, yang diambil ulang dengan eksposur berbeda (misalnya, `Im036_0` dan `Im103_0` menampilkan neutrofil yang sama dengan pergeseran 152 px). [slide_overlap.py](src/data/slide_overlap.py) memotong grid template 5 x 5 dari setiap slide pada resolusi 1/8 dan mencocokkannya, dengan normalised cross-correlation > 0.9, terhadap setiap slide dengan ukuran dan kelas yang sama. Skrip ini menemukan **15 pasangan yang tumpang tindih** yang membentuk **8 grup**, dan masing-masing grup ditempatkan ke train atau test secara utuh:
+**1. Bidang pandang yang tumpang tindih dikelompokkan.** ALL-IDB1 berisi foto-foto bidang pandang yang saling tumpang tindih dari apusan yang sama, yang diambil ulang dengan eksposur berbeda (misalnya, `Im036_0` dan `Im103_0` menampilkan neutrofil yang sama dengan pergeseran 152 px). [slide_overlap.py](src/data/slide_overlap.py) memotong grid template 5 x 5 dari setiap slide pada resolusi 1/8 dan mencocokkannya, dengan normalised cross-correlation > 0.9, terhadap setiap slide dengan ukuran dan kelas yang sama. Pencarian ini menemukan **15 pasangan tumpang tindih** yang membentuk **8 grup**, yang masing-masing ditempatkan ke train atau test secara utuh:
 
 | Grup | Slide | Kelas |
 | :--- | :--- | :--- |
@@ -188,13 +202,13 @@ Kedua skenario menjalankan GAN, translasi, dan classifier yang persis sama; hany
 | 7 | `Im078_0`, `Im089_0` | Sehat |
 | 8 | `Im094_0`, `Im095_0` | Sehat |
 
-Pencarian ini memerlukan waktu sekitar 10 menit dan hasilnya di-cache di `data/processed/target_all_idb/slide_overlaps.json`; hapus file tersebut untuk mengulanginya.
+Pencarian ini memakan waktu sekitar 10 menit dan hasilnya disimpan dalam cache di `data/processed/target_all_idb/slide_overlaps.json`; hapus file tersebut untuk mengulanginya.
 
-**2. Setiap sel fisik dihitung satu kali.** Dengan menggunakan offset dari pasangan yang tumpang tindih, sel beranotasi yang terpetakan dalam jarak 40 px dari sel berkelas sama pada slide pasangannya dianggap sebagai sel fisik yang sama. **20 salinan semacam itu** (15 ALL, 5 Normal) dikeluarkan (`"scenario_2_split": "duplicate"` dalam metadata), sehingga tersisa 495 sel unik ALL dan 120 sel unik Normal.
+**2. Setiap sel fisik dihitung satu kali.** Dengan menggunakan offset dari pasangan yang tumpang tindih, sel teranotasi yang terpetakan dalam jarak 40 px dari sel berkelas sama pada slide pasangannya dianggap sebagai sel fisik yang sama. **20 salinan semacam itu** (15 ALL, 5 Normal) dikecualikan (`"scenario_2_split": "duplicate"` dalam metadata), sehingga tersisa 495 sel ALL dan 120 sel Normal yang unik.
 
-**3. Grup test diambil per stratum.** ALL-IDB1 memiliki dua format akuisisi: `Im001_1`-`Im033_1` berukuran 1712 x 1368 px, sedangkan slide ALL lainnya dan slide sehat berukuran 2592 x 1944 px (satu slide sehat berukuran 1226 x 652 px). Inti blast memiliki ukuran yang serupa pada kedua format (median luas sekitar 22,500 vs 21,100 px), tetapi set test harus mencakup keduanya. Untuk setiap stratum (kelas, ukuran citra), grup slide diacak dengan seed dan dipindahkan ke set test hingga set tersebut memuat sedikitnya 20% sel unik dari stratum tersebut.
+**3. Grup test diambil per stratum.** ALL-IDB1 memiliki dua format akuisisi: `Im001_1`-`Im033_1` berukuran 1712 x 1368 px, sedangkan slide ALL lainnya dan slide sehat berukuran 2592 x 1944 px (satu slide sehat berukuran 1226 x 652 px). Inti blast memiliki ukuran yang serupa pada kedua format (median luas sekitar 22,500 vs 21,100 px), tetapi set test harus mencakup keduanya. Untuk setiap stratum (kelas, ukuran citra), grup slide diacak dengan seed dan dipindahkan ke set test hingga set tersebut memuat sekurang-kurangnya 20% sel unik dari stratum tersebut.
 
-| Stratum | Train | Test | Salinan yang dikeluarkan |
+| Stratum | Train | Test | Salinan yang dikecualikan |
 | :--- | :---: | :---: | :---: |
 | ALL, 1712 x 1368 | 156 | 49 | 15 |
 | ALL, 2592 x 1944 | 226 | 64 | 0 |
@@ -202,16 +216,19 @@ Pencarian ini memerlukan waktu sekitar 10 menit dan hasilnya di-cache di `data/p
 | Normal, 1226 x 652 | 0 | 1 | 0 |
 | **Total** | **477** (382 ALL + 95 Normal) | **138** (113 ALL + 25 Normal) | **20** |
 
-Slide test: `Im003_1`, `Im005_1`, `Im016_1`, `Im048_1`, `Im049_1`, `Im052_1`, `Im056_1` (ALL) dan `Im037_0`, `Im041_0`, `Im043_0`, `Im070_0`, `Im076_0`, `Im080_0`, `Im087_0`, `Im092_0`, `Im101_0`, `Im105_0`, `Im107_0` (sehat).
+Slide test: `Im003_1`, `Im005_1`, `Im016_1`, `Im048_1`, `Im049_1`, `Im052_1`, `Im056_1` (ALL) serta `Im037_0`, `Im041_0`, `Im043_0`, `Im070_0`, `Im076_0`, `Im080_0`, `Im087_0`, `Im092_0`, `Im101_0`, `Im105_0`, `Im107_0` (sehat).
 
-**4. Pemeriksaan.** `extract_all_idb.py` memunculkan error jika sebuah grup slide muncul di kedua sisi, dan [test_splits.py](tests/test_splits.py) memverifikasi pada metadata yang dihasilkan bahwa tidak ada grup slide maupun sel fisik yang melintasi split.
+**4. Bank latar belakang.** 889 patch latar belakang pada Skenario 2 hanya berasal dari 87 slide milik grup train, sehingga tidak ada satu piksel pun dari slide test yang mencapai GAN maupun classifier.
 
-**5. Membaca hasil.**
+**5. Pemilihan model.** Skenario 2 selalu dijalankan dengan `--source_val` (`python main.py run-all` menambahkannya): epoch classifier dipilih berdasarkan sel C-NMC `fold_2` yang telah ditranslasikan, sehingga tidak ada data target yang memengaruhi pemilihan model.
+
+**6. Pemeriksaan.** `extract_all_idb.py` memunculkan error jika suatu grup slide muncul di kedua sisi, dan [test_splits.py](tests/test_splits.py) memverifikasi pada metadata yang dihasilkan bahwa tidak ada grup slide maupun sel fisik yang melintasi split.
+
+**7. Membaca hasil.**
 - Set test tidak seimbang (113 ALL vs 25 Normal), sehingga **balanced accuracy dan AUROC** menjadi metrik utama: memprediksi ALL untuk setiap sel saja sudah menghasilkan accuracy biasa sebesar 81.9%.
-- Wilson interval 95% dalam `results.json` menunjukkan ketidakpastian dari set test yang hanya berisi 138 sel.
-- `--source_val` direkomendasikan di sini, agar tidak ada data target yang memengaruhi pemilihan model.
+- Wilson interval 95% menunjukkan ketidakpastian dari set test berisi 138 sel; McNemar test di `reports/summary.md` menunjukkan apakah dua metode berbeda secara signifikan.
 
-**6. Keterbatasan.** ALL-IDB1 tidak memiliki ID pasien. Pengelompokan menghilangkan kebocoran yang terlihat pada piksel, tetapi foto-foto berbeda yang tidak tumpang tindih dari satu pasien masih dapat jatuh ke kedua sisi. Skenario 2 bebas kebocoran pada tingkat foto dan sel fisik, tetapi tidak dijamin bebas kebocoran pada tingkat pasien.
+**8. Keterbatasan.** ALL-IDB1 tidak memiliki ID pasien. Pengelompokan menghilangkan kebocoran yang terlihat pada piksel, tetapi foto-foto berbeda yang tidak tumpang tindih dari satu pasien masih dapat berada di kedua sisi. Skenario 2 bebas kebocoran pada tingkat foto dan sel fisik, tetapi tidak dijamin bebas kebocoran pada tingkat pasien.
 
 ---
 
@@ -219,40 +236,50 @@ Slide test: `Im003_1`, `Im005_1`, `Im016_1`, `Im048_1`, `Im049_1`, `Im052_1`, `I
 
 | Topik | Paper | Repositori ini | Alasan |
 | :--- | :--- | :--- | :--- |
-| Objektif GAN | Pers. 3 dengan $s_a \odot t$ vs $s_a \odot s'$ | Diimplementasikan secara literal (default); varian melalui `--real_mask`, `--lambda_pixel` | Objektif literal mengalami collapse pada data ini ([5.A](#a-objektif-gan-literal-mengalami-collapse)) |
+| Input sumber GAN | Sel C-NMC tersegmentasi di atas latar hitam | Sel yang ditempelkan ke latar belakang ALL-IDB asli (`--no_composite` untuk versi paper) | Generator tidak dapat melukiskan sel darah merah ke area hitam yang datar ([5.A](#a-mengapa-gan-dimodifikasi)) |
+| Input discriminator | $s_a \odot t$ vs $s_a \odot s'$ (Pers. 3) | $t$ utuh vs $s'$ utuh (`--real_mask source` untuk versi paper) | Pers. 3 mengalami collapse menjadi $s' = s$ ([5.A](#a-mengapa-gan-dimodifikasi)) |
+| Bobot loss, optimiser, epoch | $\lambda$ = 0.5 / 10 / 1, Adam $10^{-4}$, 200 epoch | Sama | - |
 | Sel Normal | 349, sumber tidak disebutkan | 125 sel berlabel pakar | Tidak ada sumber lain dengan label yang benar ([3.C](#c-sel-normal-mengapa-125-bukan-349-seperti-di-paper)) |
 | Pool target Skenario 1 | 410 ALL + 249 Normal | 410 ALL + 25 Normal | Protokol test (100 + 100) dipertahankan persis |
 | Fold C-NMC | Tidak disebutkan | `fold_0`, round-robin per subjek | Pilihan yang dapat direproduksi |
-| Label Tabel 5 | Kolom Precision / Recall / Specificity | Metrik yang benar ditambah konvensi paper | Kolom-kolomnya salah label ([5.B](#b-label-metrik-tabel-5)) |
+| Label Tabel 5 | Kolom Precision / Recall / Specificity | Metrik yang benar beserta konvensi paper | Kolom salah diberi label ([5.B](#b-label-metrik-tabel-5)) |
 | Detail classifier | Optimiser dan pretraining tidak disebutkan | Adam, bobot ImageNet, tanpa weight decay | Default yang umum |
 | Presisi numerik | Tidak disebutkan | Mixed precision FP16 (`--no_amp` untuk menonaktifkan) | Muat pada GPU 4 GB; tidak mengubah metode |
+| Baseline tambahan | - | `composite`: komposit tanpa GAN | Memisahkan efek GAN dari efek latar belakang |
 
-### A. Objektif GAN Literal Mengalami Collapse
+### A. Mengapa GAN Dimodifikasi
 
-> [!WARNING]
-> Karena input real dan fake bagi discriminator berbagi mask yang sama, $s_a$, mask yang tertutup ($s_a = 0$) membuat kedua input bernilai nol sehingga $D_T$ tidak lagi dapat membedakan keduanya, sementara pixel loss dan cycle loss sama-sama mencapai 0 pada $s' = s$. Pada C-NMC $\rightarrow$ ALL-IDB, optimum ini tercapai dalam satu epoch: checkpoint 200 epoch dari implementasi asli memiliki $s_a = 0.000$ di seluruh bagian. Uji coba dua epoch (4,000 step, FP32) mengalami collapse untuk setiap interpretasi di bawah ini kecuali satu, bahkan dengan $\lambda_{pixel} = 0$.
->
-> | Input real ke $D_T$ (`--real_mask`) | $\lambda_{pixel}$ | Rerata mask | Rerata $\lvert s' - s \rvert$ | Hasil |
-> | :--- | :---: | :---: | :---: | :--- |
-> | `source`: $s_a \odot t$ (Pers. 3, **default**) | 1.0 | 0.000 | 0.000 | Collapse ($s' = s$) |
-> | `source`: $s_a \odot t$ | 0.0 / 0.1 | 0.000 | 0.000 | Collapse |
-> | `target`: $t_a \odot t$, $t_a = A_T(t, F(t))$ (UAIT [21]) | 1.0 | 0.013 | 0.003 | Collapse |
-> | `target`: $t_a \odot t$ | 0.1 | 0.214 | 0.141 | Tidak collapse, tetapi muncul artefak latar belakang biru |
-> | `none`: $t$ penuh | 1.0 | 0.053 | 0.006 | Collapse |
->
-> Oleh karena itu, run default mengikuti paper dan melaporkan collapse tersebut: sebuah `WARNING` pada setiap epoch dan `"collapsed": true` di checkpoint. Dengan $s' = s$, classifier secara efektif dilatih secara source-only.
+**Objective literal mengalami collapse.** Karena input real dan fake discriminator pada Pers. 3 berbagi mask $s_a$ yang sama, mask yang tertutup ($s_a = 0$) membuat kedua input bernilai nol sehingga $D_T$ tidak lagi dapat membedakan keduanya, sementara pixel loss dan cycle loss sama-sama mencapai 0 pada $s' = s$. Pada C-NMC $\rightarrow$ ALL-IDB, optimum ini tercapai dalam satu epoch: checkpoint 200 epoch dari implementasi asli memiliki $s_a = 0.000$ di seluruh area.
+
+**Menghapus mask saja tidak membantu.** Dengan citra utuh, discriminator memisahkan domain berdasarkan latar belakang (hitam vs sel darah merah) dan menang mutlak, sedangkan generator, yang tidak mampu melukiskan sel darah merah ke area hitam yang datar, bergeser kembali ke arah identity.
+
+**Pengompositan mengatasi keduanya.** Dengan sel sumber yang sudah berada di atas latar belakang ALL-IDB asli, discriminator harus menilai sel itu sendiri; permainan adversarial tetap seimbang dan translasi tidak mengalami collapse, dengan bobot loss paper tetap tidak diubah.
+
+Probe sepanjang 4,000 hingga 6,000 langkah (2 hingga 3 epoch, FP32, data Skenario 1):
+
+| Input sumber | Input discriminator | $\lambda_{pixel}$ / $\lambda_{identity}$ | Rata-rata mask | Rata-rata $\lvert s' - s \rvert$ | Loss $D_T$ | Hasil |
+| :--- | :--- | :---: | :---: | :---: | :---: | :--- |
+| Latar hitam (paper) | $s_a \odot t$ vs $s_a \odot s'$ (paper) | 1 / 0 | 0.000 | 0.000 | 0.19 | Collapse ($s' = s$) |
+| Latar hitam (paper) | $s_a \odot t$ vs $s_a \odot s'$ (paper) | 0 atau 0.1 / 0 | 0.000 | 0.000 | 0.18-0.19 | Collapse |
+| Latar hitam (paper) | $t_a \odot t$ vs $s_a \odot s'$ (UAIT [21]) | 1 / 0 | 0.013 | 0.003 | 0.005 | Collapse |
+| Latar hitam (paper) | Citra utuh | 0 / 0 | 0.497 | 0.058 (menurun) | 0.002 | $D_T$ menang; bergeser ke identity |
+| Latar hitam (paper) | Citra utuh | 0 / 5 | 0.204 | 0.044 (menurun) | 0.003 | $D_T$ menang; bergeser ke identity |
+| **Komposit (default)** | **Citra utuh (default)** | **1 / 0** | 0.296 | 0.072 (stabil) | 0.086 | **Permainan seimbang, pewarnaan teradaptasi** |
+| Komposit | Citra utuh | 0 / 5 | 0.357 | 0.078 (stabil) | 0.085 | Permainan seimbang |
+
+Oleh karena itu, konfigurasi default mempertahankan loss paper ($\lambda_{pixel} = 1$, tanpa identity loss). `--lambda_identity` dan `--real_mask` tetap tersedia untuk ablation.
 
 ### B. Label Metrik Tabel 5
 
-Kolom-kolom Tabel 5 pada paper salah label. Berdasarkan confusion matrix dari paper itu sendiri untuk model yang diusulkan (TN = 91, TP = 87 pada 100 + 100 sel test):
+Kolom-kolom Tabel 5 pada paper salah diberi label. Berdasarkan confusion matrix milik paper itu sendiri untuk model yang diusulkan (TN = 91, TP = 87 pada 100 + 100 sel test):
 
-| Kolom paper | Nilai tercetak | Besaran sebenarnya | Nilai yang benar dari metrik yang dimaksud |
+| Kolom paper | Nilai tercetak | Besaran sebenarnya | Nilai yang benar untuk metrik yang disebutkan |
 | :--- | :---: | :--- | :---: |
 | Precision | 0.8700 | Recall $TP/(TP+FN)$ | 0.9063 |
 | Recall | 0.9063 | Precision $TP/(TP+FP)$ | 0.8700 |
 | Specificity | 0.8750 | NPV $TN/(TN+FN)$ | 0.9100 |
 
-Accuracy (0.8900) dan F-score (0.8878) tidak terpengaruh. `results.json` menyimpan metrik yang benar di `test_metrics` dan konvensi paper di `test_metrics_paper_table5_columns`; [test_metrics.py](tests/test_metrics.py) mereproduksi baris pada paper tersebut.
+Accuracy (0.8900) dan F-score (0.8878) tidak terpengaruh. `results.json` menyimpan metrik yang benar di `test_metrics` dan konvensi paper di `test_metrics_paper_table5_columns`; [test_metrics.py](tests/test_metrics.py) mereproduksi baris paper tersebut.
 
 ---
 
@@ -260,109 +287,135 @@ Accuracy (0.8900) dan F-score (0.8878) tidak terpengaruh. `results.json` menyimp
 
 ```text
 ALL-IDB-Generalization/
-├── configs/
-│   └── config.yaml                  # Hyperparameter acuan (dokumentasi; train.py menggunakan opsi CLI)
 ├── data/
 │   ├── raw/
-│   │   ├── ALL-IDB/                 # ALL_IDB1 (slide .jpg, centroid blast .xyc), ALL_IDB2 (crop .tif)
+│   │   ├── ALL-IDB/                 # ALL_IDB1 (slide .jpg, centroid blast .xyc), ALL_IDB2 (potongan .tif)
 │   │   └── C-NMC_2019/              # fold_0, fold_1, fold_2
 │   └── processed/                   # Patch 128 x 128
 │       ├── source_cnmc/             # train (fold_0) dan val (fold_2)
 │       └── target_all_idb/
-│           ├── cell_level/          # Skenario 1
-│           ├── slide_level/         # Skenario 2
+│           ├── cell_level/          # Skenario 1: train, test, background
+│           ├── slide_level/         # Skenario 2: train, test, background
 │           ├── metadata_target_cells.json
 │           └── slide_overlaps.json  # Cache hasil pencarian tumpang-tindih
 ├── docs/
+│   ├── PRD.md                       # Dokumen kebutuhan produk (PRD)
 │   ├── generate_methodology_diagram.py
-│   └── assets/                      # Gambar 1-4
+│   └── assets/                      # Gambar 1-5
 ├── src/
+│   ├── pipeline/                    # Implementasi perintah di balik main.py
+│   │   ├── train.py                 # main.py train: satu stage atau satu baseline
+│   │   ├── run_all.py               # main.py run-all: seluruh studi
+│   │   ├── prepare_data.py          # main.py prepare-data
+│   │   └── evaluate.py              # main.py evaluate: perbandingan akhir
 │   ├── data/
 │   │   ├── dataset.py               # Dataset tidak berpasangan (GAN) dan berlabel (classifier)
 │   │   ├── sample_cnmc.py           # Pengambilan sampel C-NMC
-│   │   ├── extract_all_idb.py       # Pemotongan ALL-IDB dan kedua pembagian data
+│   │   ├── extract_all_idb.py       # Pemotongan ALL-IDB, kedua pembagian data, bank background
 │   │   ├── slide_overlap.py         # Deteksi bidang pandang yang tumpang-tindih
+│   │   ├── backgrounds.py           # Bank background dan pembuatan komposit
 │   │   └── stain_norm.py            # Baseline Reinhard
 │   ├── models/
 │   │   ├── attention.py             # Spatial attention dan fusi attention (A_S, A_T)
 │   │   ├── generator.py             # Generator attention
 │   │   ├── discriminator.py         # PatchGAN
-│   │   ├── cyclegan.py              # Fungsi loss Pers. 6 / Pers. 8
+│   │   ├── cyclegan.py              # Loss GAN (masukan discriminator versi paper dan versi modifikasi)
 │   │   └── classifier.py            # ResNet34
 │   ├── training/
-│   │   ├── train_gan.py             # Pelatihan GAN, checkpoint, pratinjau, pemeriksaan collapse
-│   │   ├── translate.py             # Translasi sumber
+│   │   ├── train_gan.py             # Pelatihan GAN, checkpoint, preview, pemeriksaan collapse
+│   │   ├── translate.py             # Translasi citra sumber
 │   │   └── train_classifier.py      # Pelatihan classifier dan uji buta
 │   └── utils/
-│       ├── metrics.py               # Metrik klasifikasi, pemetaan Tabel 5, PSNR
+│       ├── metrics.py               # Metrik klasifikasi, pemetaan Tabel 5, McNemar test, PSNR
 │       ├── image_pool.py            # Buffer riwayat
-│       └── lightning_logger.py      # Keluaran terminal
+│       └── console.py               # Keluaran terminal
 ├── tests/                           # Uji unit dan uji integritas data
-├── PRD.md
+├── checkpoints/                     # Dibuat oleh proses pelatihan (model, preview, results.json)
+├── reports/                         # Dibuat oleh main.py evaluate (summary.md, summary.json)
+├── logs/                            # Dibuat oleh main.py run-all
+├── main.py                          # Satu-satunya entry point
 ├── pyproject.toml                   # Konfigurasi Ruff
-├── requirements.txt
-└── train.py                         # Titik masuk command-line
+└── requirements.txt
 ```
 
 ---
 
 ## 7. Instalasi
 
-Lingkungan Python 3.11 diharapkan tersedia di `.venv` (Windows PowerShell):
+Virtual environment Python 3.11 diharapkan tersedia di `.venv` (Windows PowerShell):
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-Pada lingkungan baru:
+Pada virtual environment baru:
 
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 pip install -r requirements.txt
 ```
 
-Pengaturan bawaan (batch size GAN 1, mixed precision) cukup untuk GPU 4 GB; satu epoch GAN memerlukan sekitar dua menit pada GPU RTX 3050 Laptop.
+Tempatkan dataset mentah sebagaimana ditunjukkan pada [Bagian 6](#6-struktur-repositori). Pengaturan default (batch size GAN 1, mixed precision) muat pada GPU 4 GB; satu epoch GAN memerlukan sekitar dua menit pada GPU RTX 3050 Laptop, sehingga eksekusi penuh kedua skenario memerlukan sekitar 15 jam.
 
 ---
 
 ## 8. Penggunaan
 
-### A. Menyiapkan Data
+### A. Menjalankan Seluruh Studi (Disarankan)
 
-Tempatkan dataset mentah seperti yang ditunjukkan pada [Bagian 6](#6-struktur-repositori), kemudian:
-
-```bash
-python src/data/sample_cnmc.py       # Set train/val sumber C-NMC
-python src/data/extract_all_idb.py   # Sel target ALL-IDB dan kedua skenario (eksekusi pertama ~10 menit untuk pencarian tumpang-tindih)
+```powershell
+python main.py run-all
 ```
 
-### B. Menjalankan Skenario
+`python main.py run-all` menjalankan langkah-langkah berikut secara berurutan dan berhenti pada langkah pertama yang gagal:
 
-```bash
-# Skenario 1 (protokol paper): GAN -> translasi -> classifier -> uji buta
-python train.py --stage all --scenario cell_level
+| Langkah | Perintah |
+| :--- | :--- |
+| 1 | `python main.py prepare-data` (eksekusi pertama sekitar 10 menit) |
+| 2 | `python -m pytest -q tests` |
+| 3 | Skenario 1: `python main.py train --stage all --scenario cell_level` |
+| 4-7 | Baseline Skenario 1: `source_only`, `composite`, `reinhard`, `target_supervised` |
+| 8 | Skenario 2: `python main.py train --stage all --scenario slide_level --source_val` |
+| 9-12 | Baseline Skenario 2 (dengan `--source_val`) |
+| 13 | `python main.py evaluate` |
 
-# Skenario 2 (bebas kebocoran), dengan pemilihan model pada set validasi C-NMC
-python train.py --stage all --scenario slide_level --source_val
+Varian yang berguna:
+
+```powershell
+python main.py run-all --dry_run                                   # hanya mencetak perintah
+python main.py run-all --scenarios slide_level --skip_data         # hanya Skenario 2, data sudah disiapkan
+python main.py run-all --skip_data --epochs_gan 1 --epochs_clf 1   # smoke test (sekitar 15 menit)
 ```
 
-Setiap stage juga dapat dijalankan secara terpisah:
+Setiap banner dan ringkasan akhir juga ditulis ke `logs/run_all_<timestamp>.log`.
 
-```bash
-python train.py --stage gan --scenario cell_level
-python train.py --stage translate --scenario cell_level --checkpoint_gan checkpoints/cyclegan_cell_level/attention_cyclegan_epoch_150.pth
-python train.py --stage classifier --scenario cell_level
+### B. Menjalankan Tahap Secara Terpisah
+
+```powershell
+python main.py prepare-data
+python main.py train --stage gan --scenario slide_level
+python main.py train --stage translate --scenario slide_level --source_val --checkpoint_gan checkpoints/cyclegan_slide_level/attention_cyclegan_epoch_150.pth
+python main.py train --stage classifier --scenario slide_level --source_val
+python main.py train --stage baseline --baseline composite --scenario slide_level --source_val
+python main.py evaluate
 ```
 
-Tanpa `--checkpoint_gan`, translasi menggunakan checkpoint terbaru. Untuk mengikuti pemilihan visual sebagaimana dalam paper, periksa terlebih dahulu `checkpoints/cyclegan_<scenario>/preview_epoch_*.png`.
+Tanpa `--checkpoint_gan`, translasi menggunakan checkpoint terbaru. Untuk mengikuti pemilihan visual seperti pada paper, periksa terlebih dahulu `checkpoints/cyclegan_<scenario>/preview_epoch_*.png`, lalu ulangi stage `translate` dan `classifier` dengan checkpoint yang dipilih.
+
+GAN yang mengikuti paper secara harfiah (sebagai pembanding; model ini mengalami collapse) dijalankan dengan:
+
+```powershell
+python main.py train --stage all --scenario cell_level --real_mask source --no_composite
+```
 
 ### C. Baseline
 
-```bash
-python train.py --stage baseline --baseline source_only --scenario cell_level        # baris "Source only" pada paper
-python train.py --stage baseline --baseline reinhard --scenario cell_level           # normalisasi warna
-python train.py --stage baseline --baseline target_supervised --scenario cell_level  # sel latih target berlabel
-```
+| Baseline | Data pelatihan classifier |
+| :--- | :--- |
+| `source_only` | Sel C-NMC mentah (baris "Source only" pada paper) |
+| `composite` | Sel C-NMC yang ditempelkan pada background target, tanpa GAN |
+| `reinhard` | Sel C-NMC dengan normalisasi warna terhadap sel pelatihan target |
+| `target_supervised` | Sel pelatihan target berlabel (upper bound yang menggunakan label target) |
 
 ### D. Keluaran
 
@@ -370,48 +423,73 @@ python train.py --stage baseline --baseline target_supervised --scenario cell_le
 | :--- | :--- |
 | `checkpoints/cyclegan_<scenario>/` | Checkpoint GAN dan preview grid setiap 5 epoch |
 | `data/processed/translated_source/<scenario>/` | Citra C-NMC hasil translasi |
-| `checkpoints/classifier_<scenario>/results.json` | Metrik uji, tampilan Tabel 5, prediksi per citra |
+| `checkpoints/classifier_<scenario>/results.json` | Metrik pengujian, tampilan Tabel 5, prediksi per citra |
 | `checkpoints/classifier_<scenario>/last_classifier.pth` | Bobot classifier (`selected_classifier.pth` dengan `--source_val`) |
 | `checkpoints/baseline_<name>_<scenario>/` | Hasil baseline |
+| `reports/summary.md`, `reports/summary.json` | Perbandingan akhir setiap run dengan McNemar test |
+| `logs/run_all_<timestamp>.log` | Log `python main.py run-all` |
 
 ---
 
 ## 9. Opsi Command-Line
 
-| Opsi | Bawaan | Deskripsi |
+### A. `python main.py train`
+
+| Opsi | Default | Deskripsi |
 | :--- | :--- | :--- |
 | `--stage` | `all` | `gan`, `translate`, `classifier`, `baseline`, atau `all` (GAN + translasi + classifier) |
 | `--scenario` | `cell_level` | `cell_level` (Skenario 1) atau `slide_level` (Skenario 2) |
-| `--baseline` | none | `source_only`, `reinhard`, atau `target_supervised`; wajib untuk `--stage baseline` |
+| `--baseline` | none | `source_only`, `composite`, `reinhard`, atau `target_supervised`; wajib untuk `--stage baseline` |
 | `--epochs_gan` | `200` | Jumlah epoch GAN |
-| `--decay_epoch_gan` | `100` | Epoch saat peluruhan linear learning rate dimulai |
+| `--decay_epoch_gan` | `100` | Epoch saat penurunan learning rate secara linear dimulai |
 | `--epochs_clf` | `50` | Jumlah epoch classifier |
 | `--batch_size_gan` | `1` | Batch size GAN |
 | `--batch_size_clf` | `32` | Batch size classifier |
 | `--lr_gan` | `0.0001` | Learning rate GAN (Adam, $\beta_1 = 0.5$, $\beta_2 = 0.999$) |
 | `--lr_clf` | `0.001` | Learning rate classifier (Adam) |
-| `--lambda_gan` | `0.5` | Bobot adversarial loss |
-| `--lambda_cycle` | `10.0` | Bobot cycle-consistency loss |
-| `--lambda_pixel` | `1.0` | Bobot pixel loss |
-| `--real_mask` | `source` | Masukan $D_T$ riil: `source` ($s_a \odot t$, paper), `target` ($t_a \odot t$), `none` ($t$ utuh) |
+| `--lambda_gan` | `0.5` | Bobot loss adversarial |
+| `--lambda_cycle` | `10.0` | Bobot loss cycle-consistency |
+| `--lambda_pixel` | `1.0` | Bobot loss piksel |
+| `--lambda_identity` | `0.0` | Bobot loss identitas target (tidak terdapat pada paper) |
+| `--real_mask` | `none` | Masukan discriminator: `none` (seluruh citra), `source` (Pers. 3 pada paper), `target` ($t_a \odot t$ vs $s_a \odot s'$) |
+| `--no_composite` | off | Mentranslasi sel sumber berlatar belakang hitam, seperti pada paper |
 | `--no_target_balance` | off | Tidak menambah kelas target minoritas dengan salinan hasil flip |
-| `--source_val` | off | Memilih epoch classifier berdasarkan C-NMC `fold_2` hasil translasi alih-alih menggunakan epoch terakhir |
+| `--source_val` | off | Memilih epoch classifier berdasarkan `fold_2` C-NMC hasil translasi, alih-alih menggunakan epoch terakhir |
 | `--checkpoint_gan` | latest | Checkpoint GAN yang digunakan untuk translasi |
 | `--seed` | `42` | Seed acak |
 | `--no_amp` | off | Menonaktifkan mixed precision |
 | `--device` | `cuda` jika tersedia | `cuda` atau `cpu` |
+
+### B. `python main.py run-all`
+
+| Opsi | Default | Deskripsi |
+| :--- | :--- | :--- |
+| `--scenarios` | `cell_level slide_level` | Skenario yang dijalankan, sesuai urutan yang diberikan |
+| `--skip_data` | off | Melewati pengambilan sampel C-NMC dan ekstraksi ALL-IDB |
+| `--skip_tests` | off | Melewati uji unit |
+| `--skip_baselines` | off | Melewati classifier baseline |
+| `--epochs_gan`, `--epochs_clf` | default `main.py train` | Diteruskan ke setiap pemanggilan `python main.py train` (smoke run) |
+| `--device` | default `main.py train` | Diteruskan ke setiap pemanggilan `python main.py train` |
+| `--dry_run` | off | Mencetak daftar perintah bernomor lalu keluar |
+
+### C. `python main.py evaluate`
+
+| Opsi | Default | Deskripsi |
+| :--- | :--- | :--- |
+| `--checkpoints_dir` | `checkpoints` | Lokasi file `results.json` dibaca |
+| `--output_dir` | `reports` | Lokasi `summary.md` dan `summary.json` ditulis |
 
 ---
 
 ## 10. Pengujian
 
 ```bash
-pytest -v tests/
+python -m pytest -v tests
 ruff check .
-ruff format --check src tests train.py docs
+ruff format --check .
 ```
 
-Ke-14 pengujian mencakup bentuk keluaran dan fungsi loss model, pemuatan data dan penyeimbangan target, pemetaan metrik Tabel 5, serta pengelompokan dan pemeriksaan kebocoran pada Skenario 2.
+Ke-29 pengujian tersebut mencakup bentuk keluaran model dan loss untuk setiap mode discriminator, pemuatan data dan penyeimbangan kelas target, pembuatan komposit, pemetaan metrik Tabel 5 dan McNemar test, pengelompokan Skenario 2 serta pemeriksaan kebocoran data, daftar perintah `python main.py run-all`, dan dispatcher `main.py`.
 
 ---
 
@@ -422,3 +500,4 @@ Ke-14 pengujian mencakup bentuk keluaran dan fungsi loss model, pemuatan data da
 3. **Gupta, A., et al. (2019)**. *ISBI 2019 C-NMC Challenge: Classification of Normal vs Malignant Cells in B-ALL White Blood Cancer Microscopic Images*. TCIA.
 4. **Alami Mejjati, Y., et al. (2018)**. *Unsupervised Attention-guided Image-to-Image Translation*. NeurIPS 31.
 5. **Shrivastava, A., et al. (2017)**. *Learning from Simulated and Unsupervised Images through Adversarial Training*. CVPR.
+6. **Zhu, J.-Y., Park, T., Isola, P., & Efros, A. A. (2017)**. *Unpaired Image-to-Image Translation using Cycle-Consistent Adversarial Networks*. ICCV.

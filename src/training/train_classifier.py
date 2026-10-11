@@ -3,7 +3,6 @@
 Trains the classifier on translated source images (or a source/target baseline) and evaluates on the unseen target
 test set exactly once. Baydilli (2025) trains for 50 epochs and tests the last epoch; an optional source-domain
 validation set selects the epoch instead. The target test set is never used for model selection.
-Terminal output matches PyTorch Lightning aesthetics.
 """
 
 import copy
@@ -18,8 +17,8 @@ from tqdm import tqdm
 
 from src.data.dataset import LeukemiaClassificationDataset, get_default_transform
 from src.models.classifier import LeukemiaClassifier
-from src.utils.lightning_logger import (
-    print_lightning_header,
+from src.utils.console import (
+    print_device_header,
     print_metrics_table,
     print_model_summary,
 )
@@ -96,7 +95,7 @@ def train_classifier(
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    print_lightning_header(target_device)
+    print_device_header(target_device)
 
     train_transform = get_default_transform(image_size=image_size, is_train=True)
     eval_transform = get_default_transform(image_size=image_size, is_train=False)

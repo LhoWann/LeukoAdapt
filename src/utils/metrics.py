@@ -1,14 +1,17 @@
 """Evaluation metrics for classification and image translation quality.
 
 Implements the Table 5 metrics of Baydilli (2025) (TN, TP, Precision, Recall, Specificity, Accuracy, F-Score) and the
-PSNR of Table 4, plus NPV, Balanced Accuracy, AUROC, and a Wilson confidence interval for accuracy.
+PSNR of Table 4, plus NPV, Balanced Accuracy, AUROC, a Wilson confidence interval for accuracy, and McNemar's test
+(Eq. 9) for paired model comparison.
 """
 
 import numpy as np
 import torch
+from scipy.stats import binomtest, chi2 as chi2_dist
 from sklearn.metrics import roc_auc_score
 
 WILSON_Z_95 = 1.96
+MCNEMAR_CRITICAL_95 = 3.841
 
 
 def wilson_interval(successes: int, total: int, z: float = WILSON_Z_95) -> tuple[float, float]:
@@ -105,6 +108,43 @@ def paper_table5_columns(metrics: dict[str, float]) -> dict[str, float]:
         "Specificity": metrics["NPV"],
         "Accuracy": metrics["Accuracy"],
         "F-Score": metrics["F_Score"],
+    }
+
+
+def mcnemar_test(y_true: np.ndarray, pred_a: np.ndarray, pred_b: np.ndarray) -> dict[str, float]:
+    """Compare two classifiers on the same samples with McNemar's test, Eq. (9) of Baydilli (2025).
+
+    Uses the continuity-corrected statistic chi2 = (|b - c| - 1)^2 / (b + c) with one degree of freedom, and also
+    reports the exact two-sided binomial p-value, which is preferable when b + c < 25.
+
+    Args:
+        y_true: Array of ground truth binary labels.
+        pred_a: Predictions of model A, aligned with y_true.
+        pred_b: Predictions of model B, aligned with y_true.
+
+    Returns:
+        Dictionary with b (A correct, B wrong), c (A wrong, B correct), chi2, p_value_chi2, p_value_exact, and
+        significant (1.0 when chi2 exceeds 3.841, the paper's alpha = 0.05 rule, else 0.0).
+    """
+    correct_a = np.asarray(pred_a) == np.asarray(y_true)
+    correct_b = np.asarray(pred_b) == np.asarray(y_true)
+    b = int(np.sum(correct_a & ~correct_b))
+    c = int(np.sum(~correct_a & correct_b))
+
+    if b + c == 0:
+        chi2, p_chi2, p_exact = 0.0, 1.0, 1.0
+    else:
+        chi2 = (abs(b - c) - 1) ** 2 / (b + c)
+        p_chi2 = float(chi2_dist.sf(chi2, df=1))
+        p_exact = float(binomtest(b, b + c, 0.5, alternative="two-sided").pvalue)
+
+    return {
+        "b": float(b),
+        "c": float(c),
+        "chi2": float(chi2),
+        "p_value_chi2": p_chi2,
+        "p_value_exact": p_exact,
+        "significant": 1.0 if chi2 > MCNEMAR_CRITICAL_95 else 0.0,
     }
 
 
