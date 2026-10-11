@@ -9,11 +9,12 @@ Dokumen ini menetapkan kebutuhan proyek dalam kondisinya saat ini. Rincian tekni
 
 - **Konteks klinis**: ALL didiagnosis antara lain melalui pemeriksaan apusan darah. Classifier yang dilatih pada citra dari satu laboratorium umumnya menurun kinerjanya pada citra dari laboratorium lain karena perbedaan optik mikroskop, kamera, pewarnaan Jenner-Giemsa, dan latar belakang (sel C-NMC tersegmentasi di atas latar hitam, sel ALL-IDB berada di antara sel darah merah).
 - **Pendekatan**: sel C-NMC berlabel (domain sumber) ditranslasikan ke gaya ALL-IDB (domain target, diperlakukan tidak berlabel) dengan CycleGAN berpanduan atensi, lalu classifier ResNet34 dilatih pada hasil translasi dan diuji secara buta pada sel ALL-IDB asli.
-- **Status repositori**: proyek ini adalah **versi modifikasi** dari metode Baydilli (2025). Diimplementasikan persis seperti tertulis, GAN pada paper mengalami collapse menjadi pemetaan identitas ($s' = s$) pada data ini. Dua modifikasi membuatnya berfungsi:
+- **Status repositori**: proyek ini adalah **versi modifikasi** dari metode Baydilli (2025). Diimplementasikan persis seperti tertulis, GAN pada paper mengalami collapse menjadi pemetaan identitas ($s' = s$) pada data ini. Tiga modifikasi membuatnya berfungsi:
   1. setiap sel sumber ditempelkan pada patch latar belakang ALL-IDB asli yang bebas sel (background bank) sebelum translasi;
-  2. discriminator membandingkan citra utuh ($s'$ vs $t$), bukan citra bertopeng $s_a \odot s'$ vs $s_a \odot t$ (Pers. 3 paper).
+  2. fusion mask generator adalah cell mask yang diketahui dari sel C-NMC tersegmentasi ditambah tepi 3 px (`--fusion cell`, default), bukan attention mask $A_S$ yang dipelajari seperti pada paper (`--fusion learned`); patch latar belakang tidak diubah;
+  3. discriminator membandingkan citra utuh ($s'$ vs $t$), bukan citra bertopeng $s_a \odot s'$ vs $s_a \odot t$ (Pers. 3 paper).
 
-  Bobot loss, optimizer, jumlah epoch, dan arsitektur mengikuti paper. GAN versi literal paper tetap tersedia melalui `--real_mask source --no_composite` sebagai pembanding.
+  Bobot loss, optimizer, dan jumlah epoch mengikuti paper; blok spatial attention di dalam generator (Algorithm 2) tetap dipertahankan. Modifikasi kedua ditambahkan karena run penuh pertama yang hanya memakai modifikasi 1 dan 3 mengalami collapse pada epoch 4 (learned mask turun dari 0.12 ke 0.0001), padahal probe singkat 2 sampai 3 epoch tampak stabil; dengan cell mask, run 6 epoch tetap stabil (perubahan di dalam sel sekitar 0.20). GAN versi literal paper tetap tersedia melalui `--fusion learned --real_mask source --no_composite --allow_collapse` sebagai pembanding.
 - **Hubungan dengan replikasi murni**: versi salinan paper yang murni dikembangkan secara terpisah oleh dosen pembimbing. Repositori ini **tidak** menjanjikan replikasi eksak maupun pencapaian akurasi 89% dari paper.
 
 ---
@@ -59,11 +60,11 @@ Dokumen ini menetapkan kebutuhan proyek dalam kondisinya saat ini. Rincian tekni
 
 #### B. Metode (Ringkas)
 
-- **Fase 1, translasi domain**: sel sumber komposit $s$ diproses generator $G_{S \to T}$ dan modul atensi $A_S$, yang menghasilkan attention mask $s_a$ dan
+- **Fase 1, translasi domain**: sel sumber komposit $s$ diproses generator $G_{S \to T}$ (encoder dengan spatial attention setelah setiap blok konvolusi, Algorithm 2) yang menghasilkan citra konten $G_{S \to T}(s)$, lalu digabung dengan fusion mask $s_a$:
   $$s' = s_a \odot G_{S \to T}(s) + (1 - s_a) \odot s.$$
-  $F_{T \to S}$ dan $A_T$ memetakan $s'$ kembali ke $s''$. Fungsi objektif sesuai paper:
+  Secara default, $s_a$ adalah cell mask sel C-NMC tersegmentasi yang diperlebar 3 px (`--fusion cell`), sehingga generator mengubah gaya sel dan memadukan tepinya, sedangkan patch latar belakang tetap utuh. Dengan `--fusion learned`, $s_a$ adalah attention mask $A_S$ yang dipelajari seperti pada paper (Algorithm 1). $F_{T \to S}$ dan $A_T$ memetakan $s'$ kembali ke $s''$. Fungsi objektif sesuai paper:
   $$\mathcal{L} = 0.5\,\mathcal{L}_{GAN} + 10\,\lVert s - s'' \rVert_1 + 1\,\lVert s - s' \rVert_1,$$
-  dengan least-squares adversarial loss, discriminator PatchGAN $D_T$ yang membandingkan citra utuh, history buffer 50 citra, 200 epoch, Adam ($\beta_1 = 0.5$, $\beta_2 = 0.999$), learning rate $10^{-4}$ yang meluruh linear mulai epoch 100.
+  dengan least-squares adversarial loss, discriminator PatchGAN $D_T$ yang membandingkan citra utuh, history buffer 50 citra, 200 epoch, Adam ($\beta_1 = 0.5$, $\beta_2 = 0.999$), learning rate $10^{-4}$ yang meluruh linear mulai epoch 100. Pelatihan dihentikan dengan error bila translasi collapse selama 3 epoch berturut-turut, kecuali `--allow_collapse` diberikan.
 - **Fase 2, classifier**: ResNet34 (bobot ImageNet) dilatih pada 2,000 citra $s'$ dengan label sumbernya; 50 epoch, Adam, learning rate $10^{-3}$, batch size 32. Model dipilih dari epoch terakhir (sesuai paper) atau, dengan `--source_val`, berdasarkan sel C-NMC `fold_2` hasil translasi.
 - **Fase 3, evaluasi buta**: classifier dijalankan satu kali pada sel test ALL-IDB asli yang belum pernah dilihat.
 
@@ -101,13 +102,14 @@ Ketentuan data:
 | F-1 | Seluruh studi dijalankan berurutan (persiapan data, test, kedua skenario beserta baseline, evaluasi) dan berhenti pada langkah pertama yang gagal; log ditulis ke `logs/run_all_<timestamp>.log` | `python main.py run-all` (`--dry_run`, `--scenarios`, `--skip_data`, `--skip_tests`, `--skip_baselines`) |
 | F-2 | Sampling C-NMC, ekstraksi ALL-IDB1, kedua split, dan background bank | `python main.py prepare-data` |
 | F-3 | Pelatihan satu tahap (`gan`, `translate`, `classifier`, `all`) atau satu baseline untuk skenario yang dipilih | `python main.py train --stage ... --scenario cell_level\|slide_level` |
-| F-4 | GAN menyimpan checkpoint dan preview grid (sumber komposit / $s'$ / $s_a$) setiap 5 epoch, mencatat mask mean dan $\lvert s' - s \rvert$, serta mencetak `WARNING` bila translasi collapse | `src/training/train_gan.py` |
+| F-4 | GAN menyimpan checkpoint dan preview grid (sumber komposit / $s'$ / $s_a$) setiap 5 epoch, mencatat mask mean dan `translation_delta` (rata-rata $\lvert s' - s \rvert$ di dalam fusion mask), mencetak `WARNING` bila translasi collapse ($s' \approx s$ di dalam $s_a$), dan menghentikan pelatihan dengan error bila `translation_delta` di bawah 0.02 selama 3 epoch berturut-turut | `src/training/train_gan.py`; `--allow_collapse` untuk tetap melanjutkan pelatihan |
 | F-5 | Translasi dapat memakai checkpoint pilihan (seleksi visual seperti paper) | `--checkpoint_gan` |
 | F-6 | Empat baseline: `source_only`, `composite` (komposit tanpa GAN), `reinhard`, `target_supervised` (batas atas) | `--stage baseline --baseline <nama>` |
-| F-7 | GAN literal paper tersedia untuk perbandingan | `--real_mask source --no_composite` |
+| F-7 | GAN literal paper tersedia untuk perbandingan | `--fusion learned --real_mask source --no_composite --allow_collapse` |
 | F-8 | Skenario 2 selalu memakai `--source_val`, sehingga data target tidak memengaruhi pemilihan model | `run-all` menambahkannya otomatis |
 | F-9 | `results.json` per run memuat confusion matrix, akurasi dengan Wilson 95% CI, balanced accuracy, precision, recall, specificity, NPV, F-score, AUROC, tampilan konvensi kolom Tabel 5 paper, dan prediksi per citra | `src/training/train_classifier.py` |
 | F-10 | Seluruh run dihimpun ke satu tabel per skenario dengan uji McNemar berpasangan | `python main.py evaluate` $\rightarrow$ `reports/summary.md`, `reports/summary.json` |
+| F-11 | Fusion mask generator dapat dipilih: cell mask yang diketahui ditambah tepi 3 px (default) atau attention mask $A_S$ yang dipelajari (paper); opsi ini, `--real_mask`, dan `--lambda_identity` tersedia untuk ablasi | `--fusion cell\|learned` |
 
 Catatan: tidak ada lagi `train.py`, `run_all.py`, `evaluate_all.py`, atau `configs/config.yaml` di root repositori; `main.py` adalah satu-satunya entry point dan hyperparameter diatur melalui opsi command-line.
 
@@ -118,7 +120,7 @@ Catatan: tidak ada lagi `train.py`, `run_all.py`, `evaluate_all.py`, atau `confi
 - **NF-1. Reprodusibilitas**: seed tetap (default 42); pemilihan patch latar untuk translasi dan baseline `composite` deterministik berdasarkan nama file; hasil pencarian overlap disimpan dalam cache.
 - **NF-2. Perangkat keras**: berjalan pada GPU 4 GB (GAN batch size 1, FP16 mixed precision; `--no_amp` untuk menonaktifkan). Satu epoch GAN sekitar dua menit pada RTX 3050 Laptop GPU; run lengkap kedua skenario sekitar 15 jam.
 - **NF-3. Integritas data**: `extract_all_idb.py` memunculkan error jika grup slide muncul di kedua sisi split Skenario 2; `tests/test_splits.py` memverifikasinya pada metadata yang dihasilkan.
-- **NF-4. Kualitas kode**: `python -m pytest -v tests`, `ruff check .`, dan `ruff format --check .` lulus; test mencakup bentuk model dan loss untuk setiap mode discriminator, pemuatan data dan penyeimbangan target, compositing, pemetaan metrik Tabel 5 dan uji McNemar, pengelompokan dan pemeriksaan kebocoran Skenario 2, daftar perintah `run-all`, dan dispatcher `main.py`.
+- **NF-4. Kualitas kode**: `python -m pytest -v tests`, `ruff check .`, dan `ruff format --check .` lulus (30 test); test mencakup bentuk model dan loss untuk setiap mode discriminator dan fusion, cell fusion yang mempertahankan latar belakang, pemuatan data dan penyeimbangan target, compositing, pemetaan metrik Tabel 5 dan uji McNemar, pengelompokan dan pemeriksaan kebocoran Skenario 2, daftar perintah `run-all`, dan dispatcher `main.py`.
 - **NF-5. Transparansi**: setiap penyimpangan dari paper didokumentasikan di README Bagian 5; tidak ada label yang diubah berdasarkan penilaian penulis repositori.
 - **NF-6. Lingkungan**: Python 3.11, PyTorch dengan CUDA, dependensi di `requirements.txt`.
 
@@ -138,7 +140,7 @@ Kriteria berikut dapat diukur dan tidak menetapkan angka akurasi tertentu:
 
 | ID | Kriteria | Cara verifikasi |
 | :--- | :--- | :--- |
-| K-1 | GAN default tidak collapse: tidak ada `WARNING` collapse selama pelatihan, attention mask tidak tertutup, dan $\lvert s' - s \rvert$ tetap di atas ambang collapse | Log pelatihan, statistik `mask_mean` dan `translation_delta` di checkpoint, preview grid |
+| K-1 | GAN default tidak collapse: tidak ada `WARNING` collapse selama pelatihan, pelatihan tidak dihentikan oleh pemeriksaan collapse (`translation_delta`, yaitu rata-rata $\lvert s' - s \rvert$ di dalam fusion mask, tidak berada di bawah 0.02 selama 3 epoch berturut-turut), dan preview menunjukkan sel yang benar-benar diubah gayanya | Log pelatihan, statistik `mask_mean` dan `translation_delta` di checkpoint, preview grid |
 | K-2 | Pipeline berjalan end to end untuk kedua skenario dan keempat baseline tanpa langkah gagal | `python main.py run-all` dan log-nya |
 | K-3 | Tidak ada kebocoran train/test pada Skenario 2 di tingkat grup slide, sel fisik, dan background bank | `tests/test_splits.py` lulus; error guard di `extract_all_idb.py` tidak terpicu |
 | K-4 | Setiap run melaporkan akurasi dengan Wilson 95% CI | `results.json`, `reports/summary.md` |
@@ -155,7 +157,8 @@ Hasil negatif (misalnya GAN tidak berbeda signifikan dari `composite`) tetap mer
 
 | Risiko | Dampak | Mitigasi |
 | :--- | :--- | :--- |
-| GAN collapse ke identitas ($s' = s$), seperti pada formulasi literal paper | Translasi tidak bermakna; classifier setara dengan `source_only` | Komposit latar ALL-IDB dan discriminator citra utuh; deteksi collapse otomatis (`WARNING`); preview setiap 5 epoch; checkpoint dipilih secara visual dengan `--checkpoint_gan` |
+| GAN collapse ke identitas ($s' = s$), seperti pada formulasi literal paper; learned mask yang tertutup memenuhi seluruh reconstruction loss sekaligus, sehingga collapse dapat terjadi bahkan dengan input komposit | Translasi tidak bermakna; classifier setara dengan `source_only` | Komposit latar ALL-IDB, discriminator citra utuh, dan cell mask sebagai fusion mask (`--fusion cell`) sehingga generator tidak dapat "mematikan" dirinya; deteksi collapse otomatis (`WARNING`) dan penghentian pelatihan bila `translation_delta` di bawah 0.02 selama 3 epoch berturut-turut; probe singkat (2 sampai 3 epoch) dapat menyesatkan, karena run penuh pertama baru collapse pada epoch 4, sehingga preview setiap 5 epoch harus diperiksa; checkpoint dipilih secara visual dengan `--checkpoint_gan` |
+| Artefak warna pada epoch awal (misalnya sel kehijauan) | Checkpoint awal dapat menghasilkan translasi yang tidak realistis | Preview grid diperiksa sebelum memilih checkpoint; checkpoint awal tidak dipakai untuk translasi tanpa pemeriksaan visual |
 | Sedikit sel Normal (125, bukan 349) | Pool target Skenario 1 hanya memuat 25 Normal; set test Skenario 2 hanya 25 Normal; estimasi berketidakpastian tinggi | Kelas minoritas pool target diseimbangkan dengan salinan flip (sesuai paper); Wilson 95% CI dan uji McNemar; balanced accuracy dan AUROC pada Skenario 2 |
 | ALL-IDB tidak memiliki ID pasien | Foto berbeda yang tidak tumpang tindih dari pasien yang sama dapat berada di kedua sisi split | Pengelompokan overlap dan deduplikasi sel fisik; keterbatasan dinyatakan secara eksplisit: Skenario 2 bebas kebocoran di tingkat foto dan sel fisik, tidak dijamin di tingkat pasien |
 | Kebocoran pada Skenario 1 (sel satu foto dan 5 sel fisik di kedua sisi) | Kinerja Skenario 1 dapat terlalu optimis | Skenario 1 hanya dipakai sebagai protokol pembanding paper; Skenario 2 menjadi acuan generalisasi; selisih keduanya dilaporkan |

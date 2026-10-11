@@ -11,7 +11,7 @@ import torchvision.transforms as T
 from PIL import Image
 from tqdm import tqdm
 
-from src.data.backgrounds import background_for, composite_on_background, load_background_paths
+from src.data.backgrounds import background_for, cell_alpha, composite_with_mask, fusion_mask, load_background_paths
 from src.models.attention import AttentionFusionModule
 from src.models.generator import AttentionGenerator
 
@@ -57,6 +57,7 @@ def translate_source_dataset(
         ]
     )
     backgrounds = load_background_paths(background_dir) if background_dir else []
+    use_cell_mask = ckpt.get("fusion", "learned") == "cell"
 
     counts = []
     for cls in ("all", "hem"):
@@ -68,9 +69,16 @@ def translate_source_dataset(
                 with Image.open(f) as img:
                     source = img.convert("RGB")
                 if backgrounds:
-                    source = composite_on_background(source, Image.open(background_for(f.name, backgrounds)))
+                    source, mask = composite_with_mask(source, Image.open(background_for(f.name, backgrounds)))
+                else:
+                    mask = fusion_mask(cell_alpha(source))
                 tensor_img = transform(source).unsqueeze(0).to(target_device)
-                s_prime, _ = attn(tensor_img, gen(tensor_img))
+                content = gen(tensor_img)
+                if use_cell_mask:
+                    cell_mask = torch.from_numpy(mask)[None, None].to(target_device)
+                    s_prime = cell_mask * content + (1.0 - cell_mask) * tensor_img
+                else:
+                    s_prime, _ = attn(tensor_img, content)
                 out_tensor = (s_prime.squeeze(0).cpu() * 0.5 + 0.5).clamp(0, 1)
                 T.ToPILImage()(out_tensor).save(out_dir / f.name)
         counts.append(len(files))

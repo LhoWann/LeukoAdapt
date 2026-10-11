@@ -22,7 +22,7 @@
 > This repository is a **modified version** of the method of
 > **Yusuf Yargı Baydilli (2025)**, *"Unsupervised attention-guided domain adaptation model for Acute Lymphocytic Leukemia (ALL) diagnosis"*, **Biomedical Signal Processing and Control**, Vol. 101, 107159. [DOI: 10.1016/j.bspc.2024.107159](https://doi.org/10.1016/j.bspc.2024.107159).
 >
-> Implemented exactly as written, the paper's GAN collapses to an identity mapping on this data. Two changes make it work (source cells pasted onto real ALL-IDB backgrounds, and a discriminator that sees whole images); everything else follows the paper. The literal paper GAN remains available with `--real_mask source --no_composite`. **Scenario 1** uses the paper's evaluation protocol; **Scenario 2** is a stricter, leak-free split. All deviations are listed in [Section 5](#5-reproduction-notes-deviations-from-the-paper).
+> Implemented exactly as written, the paper's GAN collapses to an identity mapping on this data. Three changes make it work: source cells are pasted onto real ALL-IDB backgrounds, the generator restyles the known cell region instead of a learned attention mask, and the discriminator sees whole images; everything else follows the paper. The literal paper GAN remains available with `--fusion learned --real_mask source --no_composite --allow_collapse`. **Scenario 1** uses the paper's evaluation protocol; **Scenario 2** is a stricter, leak-free split. All deviations are listed in [Section 5](#5-reproduction-notes-deviations-from-the-paper).
 
 ---
 
@@ -71,7 +71,8 @@ Labelling a new dataset for every laboratory is expensive, so the target domain 
 
 - **Objective**: translate the labelled C-NMC source cells ($s$) into the style of the ALL-IDB target domain ($t$) without changing their diagnosis.
 - **Background compositing** (modification): every source cell is pasted onto a real, cell-free ALL-IDB background patch before translation ([Section 3.E](#e-target-background-bank)), so the GAN adapts the cell instead of trying to paint red blood cells into a black area.
-- **Attention-guided generator ($G_{S \to T}$, $A_S$)**: an encoder with spatial attention after every convolution block, six residual blocks, and a decoder with skip connections produce a content image $G(s)$. The attention module computes a one-channel mask from it, $s_a = \sigma\big(f_{7\times7}([\mathrm{AvgPool}(G(s)); \mathrm{MaxPool}(G(s))])\big)$, and blends:
+- **Attention generator ($G_{S \to T}$)**: an encoder with spatial attention after every convolution block (Algorithm 2), six residual blocks, and a decoder with skip connections produce a content image $G(s)$.
+- **Fusion mask** (modification): the paper learns the blending mask $s_a = \sigma\big(f_{7\times7}([\mathrm{AvgPool}(G(s)); \mathrm{MaxPool}(G(s))])\big)$ (Algorithm 1, $A_S$). A closed mask satisfies every reconstruction loss at once, and on this data it shuts during training ([Section 5.A](#a-why-the-gan-is-modified)). Because C-NMC cells are segmented, the cell region is known: $s_a$ is the cell mask widened by a 3 px rim, so the generator restyles the cell and blends its boundary while the background patch stays untouched:
 
   $$s' = s_a \odot G_{S \to T}(s) + (1 - s_a) \odot s$$
 
@@ -79,7 +80,7 @@ Labelling a new dataset for every laboratory is expensive, so the target domain 
 - **PatchGAN discriminator ($D_T$)** (modification): compares the whole translated image $s'$ with a whole real target image $t$. The paper's Eq. 3 compares $s_a \odot s'$ with $s_a \odot t$, which has a degenerate optimum ([Section 5.A](#a-why-the-gan-is-modified)). A 50-image history buffer stabilises the discriminator.
 - **Objective** (as in the paper): $\mathcal{L} = 0.5\,\mathcal{L}_{GAN} + 10\,\lVert s - s'' \rVert_1 + 1\,\lVert s - s' \rVert_1$, with least-squares adversarial terms and the discriminator loss halved. The pixel term is the SimGAN self-regularisation cited by the paper (ref. [105]).
 - **Training** (as in the paper): 200 epochs, Adam ($\beta_1 = 0.5$, $\beta_2 = 0.999$), learning rate $10^{-4}$ decaying linearly to 0 from epoch 100, horizontal-flip augmentation, target classes padded to 1:1 with flipped copies (paper Section 5.1.2).
-- **Checkpoint choice**: a checkpoint and a preview grid (composite source / $s'$ / $s_a$) are saved every 5 epochs. The paper keeps the visually best checkpoint; pass it with `--checkpoint_gan`. A `WARNING` is printed if the translation collapses ($s' \approx s$).
+- **Checkpoint choice**: a checkpoint and a preview grid (composite source / $s'$ / $s_a$) are saved every 5 epochs. The paper keeps the visually best checkpoint; pass it with `--checkpoint_gan`. A `WARNING` is printed when the translation collapses ($s' \approx s$ inside $s_a$), and training stops after 3 collapsed epochs unless `--allow_collapse` is given.
 
 ### Phase 2: Classifier Training on the Translated Source
 
@@ -168,7 +169,7 @@ Target labels are used only to flip-balance the GAN target pool, as in the paper
 
 ### E. Target Background Bank
 
-For each scenario, [backgrounds.py](src/data/backgrounds.py) crops 257 x 257 patches from the slides on the **training side** of that scenario's split (up to 12 per slide), keeping a patch only when its centre is at least 220 px from every annotated cell and it contains no nucleus-like stain and no orange annotation arrow. Each source cell is then pasted onto a patch: the cell mask is the non-black area of the segmented C-NMC image, eroded by 2 px (the resized segmentation edge is blended with black) and feathered by 1 px. During GAN training the patch is drawn at random; for translation and for the `composite` baseline it is chosen deterministically from the file name, so results are reproducible.
+For each scenario, [backgrounds.py](src/data/backgrounds.py) crops 257 x 257 patches from the slides on the **training side** of that scenario's split (up to 12 per slide), keeping a patch only when its centre is at least 220 px from every annotated cell and it contains no nucleus-like stain and no orange annotation arrow. Each source cell is then pasted onto a patch: the cell mask is the non-black area of the segmented C-NMC image, eroded by 2 px (the resized segmentation edge is blended with black) and feathered by 1 px. The same cell mask, widened by 3 px, is the generator's fusion mask ([Section 2](#2-methodology)). During GAN training the patch is drawn at random; for translation and for the `composite` baseline it is chosen deterministically from the file name, so results are reproducible.
 
 <p align="center">
   <img src="docs/assets/composite_examples.png" alt="C-NMC cells and their composites" width="100%" />
@@ -238,6 +239,7 @@ Test slides: `Im003_1`, `Im005_1`, `Im016_1`, `Im048_1`, `Im049_1`, `Im052_1`, `
 | :--- | :--- | :--- | :--- |
 | Source input of the GAN | Segmented C-NMC cells on black | Cells pasted onto real ALL-IDB backgrounds (`--no_composite` for the paper) | A generator cannot paint red blood cells into a flat black area ([5.A](#a-why-the-gan-is-modified)) |
 | Discriminator input | $s_a \odot t$ vs $s_a \odot s'$ (Eq. 3) | Whole $t$ vs whole $s'$ (`--real_mask source` for the paper) | Eq. 3 collapses to $s' = s$ ([5.A](#a-why-the-gan-is-modified)) |
+| Fusion mask | Learned attention mask $s_a$ (Algorithm 1) | Known cell mask plus a 3 px rim (`--fusion learned` for the paper) | The learned mask closes and collapses the translation, even on composites ([5.A](#a-why-the-gan-is-modified)) |
 | Loss weights, optimiser, epochs | $\lambda$ = 0.5 / 10 / 1, Adam $10^{-4}$, 200 epochs | Same | - |
 | Normal cells | 349, source not stated | 125 expert-labelled cells | No other correctly labelled source exists ([3.C](#c-normal-cells-why-125-instead-of-the-papers-349)) |
 | Scenario 1 target pool | 410 ALL + 249 Normal | 410 ALL + 25 Normal | Test protocol (100 + 100) kept exactly |
@@ -253,9 +255,11 @@ Test slides: `Im003_1`, `Im005_1`, `Im016_1`, `Im048_1`, `Im049_1`, `Im052_1`, `
 
 **Removing the mask alone does not help.** With whole images, the discriminator separates the domains by the background (black vs red blood cells) and wins outright, and the generator, unable to paint red blood cells into a flat black area, drifts back towards the identity.
 
-**Compositing fixes both.** With the source cell already on a real ALL-IDB background, the discriminator has to judge the cell itself; the adversarial game stays balanced and the translation does not collapse, with the paper's loss weights unchanged.
+**Compositing is necessary but not sufficient.** With the source cell already on a real ALL-IDB background, the discriminator has to judge the cell itself, and short probes (2 to 3 epochs) looked stable. The first full run nevertheless collapsed at epoch 4: the learned mask fell from 0.12 to 0.0001 while $D_T$ took over. A closed learned mask satisfies the cycle, pixel and identity losses at the same time, so once the discriminator gains the upper hand the generator takes that exit. Without mixed precision the mask closes more slowly, and replacing the pixel loss by an identity loss makes it close even faster.
 
-Probes of 4,000 to 6,000 steps (2 to 3 epochs, FP32, Scenario 1 data):
+**The known cell mask removes the exit.** C-NMC cells are segmented, so the region to restyle is known. With the cell mask as the fusion mask the generator can no longer switch itself off: over 6 epochs with mixed precision, the mean change inside the cell stayed at 0.20 with the paper's loss weights unchanged. A learned mask anchored to the cell mask by an extra binary cross-entropy term behaved the same, but it needs another hyperparameter, so the fixed mask is the default.
+
+Short probes (4,000 to 6,000 steps, FP32, Scenario 1 data; change measured over the whole image):
 
 | Source input | Discriminator input | $\lambda_{pixel}$ / $\lambda_{identity}$ | Mask mean | Mean $\lvert s' - s \rvert$ | $D_T$ loss | Outcome |
 | :--- | :--- | :---: | :---: | :---: | :---: | :--- |
@@ -264,10 +268,20 @@ Probes of 4,000 to 6,000 steps (2 to 3 epochs, FP32, Scenario 1 data):
 | Black background (paper) | $t_a \odot t$ vs $s_a \odot s'$ (UAIT [21]) | 1 / 0 | 0.013 | 0.003 | 0.005 | Collapsed |
 | Black background (paper) | Whole images | 0 / 0 | 0.497 | 0.058 (falling) | 0.002 | $D_T$ wins; drifts to identity |
 | Black background (paper) | Whole images | 0 / 5 | 0.204 | 0.044 (falling) | 0.003 | $D_T$ wins; drifts to identity |
-| **Composite (default)** | **Whole images (default)** | **1 / 0** | 0.296 | 0.072 (stable) | 0.086 | **Balanced game, stain adapted** |
-| Composite | Whole images | 0 / 5 | 0.357 | 0.078 (stable) | 0.085 | Balanced game |
+| Composite | Whole images | 1 / 0 | 0.296 | 0.072 | 0.086 | Stable for 3 epochs, collapsed in the full run (below) |
+| Composite | Whole images | 0 / 5 | 0.357 | 0.078 | 0.085 | Stable for 3 epochs, collapsed in the full run (below) |
 
-The default therefore keeps the paper's losses ($\lambda_{pixel} = 1$, no identity loss). `--lambda_identity` and `--real_mask` remain available for ablations.
+Runs of the training code itself (composite input, whole-image discriminator, Scenario 1 data; change measured inside the fusion mask):
+
+| Fusion mask | $\lambda_{pixel}$ / $\lambda_{identity}$ | Precision | Mask mean per epoch | Change inside the cell | Outcome |
+| :--- | :---: | :---: | :--- | :--- | :--- |
+| Learned (paper) | 1 / 0 | FP16 | 0.12, 0.09, 0.06, 0.01, 0.0001 | Falls to 0 | Collapsed at epoch 4 (first full run) |
+| Learned (paper) | 1 / 0 | FP32 | 0.35, 0.27, 0.23, 0.08 | Falls | Collapsing |
+| Learned (paper) | 0 / 5 | FP16 | 0.27, 0.06, 0.000 | Falls to 0 | Collapsed at epoch 3 |
+| Learned, anchored to the cell mask | 1 / 0 | FP16 | 0.17 to 0.16 over 6 epochs | 0.15 to 0.20 | Stable |
+| **Cell mask (default)** | **1 / 0** | **FP16** | **0.16 (fixed)** | **0.21 to 0.20 over 6 epochs** | **Stable** |
+
+The change inside the cell is the mean $\lvert s' - s \rvert$ over the fusion mask (images scaled to $[-1, 1]$); the training log reports it as `translation_delta`, and a value below 0.02 for 3 consecutive epochs stops training. The default keeps the paper's loss weights ($\lambda_{pixel} = 1$, no identity loss); `--fusion`, `--lambda_identity` and `--real_mask` remain available for ablations.
 
 ### B. Table 5 Metric Labels
 
@@ -405,7 +419,7 @@ Without `--checkpoint_gan`, translation uses the latest checkpoint. To follow th
 The literal paper GAN (for comparison; it collapses) is:
 
 ```powershell
-python main.py train --stage all --scenario cell_level --real_mask source --no_composite
+python main.py train --stage all --scenario cell_level --fusion learned --real_mask source --no_composite --allow_collapse
 ```
 
 ### C. Baselines
@@ -453,6 +467,8 @@ python main.py train --stage all --scenario cell_level --real_mask source --no_c
 | `--lambda_identity` | `0.0` | Target identity loss weight (not in the paper) |
 | `--real_mask` | `none` | Discriminator inputs: `none` (whole images), `source` (paper Eq. 3), `target` ($t_a \odot t$ vs $s_a \odot s'$) |
 | `--no_composite` | off | Translate the black-background source cells, as in the paper |
+| `--fusion` | `cell` | Generator fusion mask: `cell` (known cell mask) or `learned` (attention mask $A_S$, paper) |
+| `--allow_collapse` | off | Keep training after the translation has collapsed for 3 epochs (default: stop) |
 | `--no_target_balance` | off | Do not pad the minority target class with flipped copies |
 | `--source_val` | off | Select the classifier epoch on translated C-NMC `fold_2` instead of using the last epoch |
 | `--checkpoint_gan` | latest | GAN checkpoint used for translation |
@@ -489,7 +505,7 @@ ruff check .
 ruff format --check .
 ```
 
-The 29 tests cover model shapes and losses for every discriminator mode, data loading and target balancing, compositing, the Table 5 metric mapping and the McNemar test, the Scenario 2 grouping and leakage checks, the `python main.py run-all` command list and the `main.py` dispatcher.
+The 30 tests cover model shapes and losses for every discriminator and fusion mode, the background-preserving cell fusion, data loading and target balancing, compositing, the Table 5 metric mapping and the McNemar test, the Scenario 2 grouping and leakage checks, the `python main.py run-all` command list and the `main.py` dispatcher.
 
 ---
 

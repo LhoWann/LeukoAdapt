@@ -22,6 +22,7 @@ MAX_ARROW_PIXELS = 20
 SOURCE_FOREGROUND_THRESHOLD = 8
 EDGE_EROSION_PX = 2
 MASK_FEATHER_SIGMA = 1.0
+FUSION_RIM_PX = 3
 
 
 def extract_background_bank(
@@ -94,6 +95,52 @@ def load_background_paths(background_dir: str | Path) -> list[Path]:
     return paths
 
 
+def cell_alpha(source: Image.Image) -> np.ndarray:
+    """Soft foreground mask of a segmented source cell (black background).
+
+    Args:
+        source: Segmented source cell image.
+
+    Returns:
+        Float mask in [0, 1] of shape (H, W).
+    """
+    src = np.asarray(source.convert("RGB"))
+    foreground = ndimage.binary_fill_holes(ndimage.binary_opening(src.max(axis=2) > SOURCE_FOREGROUND_THRESHOLD))
+    # The resized segmentation edge is blended with black; dropping it avoids a dark ring around the pasted cell.
+    foreground = ndimage.binary_erosion(foreground, iterations=EDGE_EROSION_PX)
+    return ndimage.gaussian_filter(foreground.astype(np.float32), MASK_FEATHER_SIGMA)
+
+
+def fusion_mask(alpha: np.ndarray) -> np.ndarray:
+    """Region the generator may change: the cell plus a thin rim, so it can blend the pasted boundary.
+
+    Args:
+        alpha: Output of cell_alpha.
+
+    Returns:
+        Float mask in [0, 1] of shape (H, W).
+    """
+    region = ndimage.binary_dilation(alpha > 0.5, iterations=FUSION_RIM_PX)
+    return ndimage.gaussian_filter(region.astype(np.float32), MASK_FEATHER_SIGMA)
+
+
+def composite_with_mask(source: Image.Image, background: Image.Image) -> tuple[Image.Image, np.ndarray]:
+    """Paste a segmented source cell onto a target background patch and return the generator's fusion mask.
+
+    Args:
+        source: Segmented source cell image.
+        background: Target background patch.
+
+    Returns:
+        Tuple of (composite image, fusion mask of shape (H, W)).
+    """
+    alpha = cell_alpha(source)
+    src = np.asarray(source.convert("RGB"), dtype=np.float32)
+    bg = np.asarray(background.convert("RGB").resize(source.size, Image.Resampling.BICUBIC), dtype=np.float32)
+    composite = alpha[..., None] * src + (1.0 - alpha[..., None]) * bg
+    return Image.fromarray(composite.clip(0, 255).astype(np.uint8)), fusion_mask(alpha)
+
+
 def composite_on_background(source: Image.Image, background: Image.Image) -> Image.Image:
     """Paste a segmented source cell (black background) onto a target background patch.
 
@@ -104,13 +151,7 @@ def composite_on_background(source: Image.Image, background: Image.Image) -> Ima
     Returns:
         The composite image.
     """
-    src = np.asarray(source.convert("RGB"), dtype=np.float32)
-    bg = np.asarray(background.convert("RGB").resize(source.size, Image.Resampling.BICUBIC), dtype=np.float32)
-    foreground = ndimage.binary_fill_holes(ndimage.binary_opening(src.max(axis=2) > SOURCE_FOREGROUND_THRESHOLD))
-    # The resized segmentation edge is blended with black; dropping it avoids a dark ring around the pasted cell.
-    foreground = ndimage.binary_erosion(foreground, iterations=EDGE_EROSION_PX)
-    alpha = ndimage.gaussian_filter(foreground.astype(np.float32), MASK_FEATHER_SIGMA)[..., None]
-    return Image.fromarray((alpha * src + (1.0 - alpha) * bg).clip(0, 255).astype(np.uint8))
+    return composite_with_mask(source, background)[0]
 
 
 def background_for(name: str, backgrounds: list[Path]) -> Path:

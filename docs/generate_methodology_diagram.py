@@ -74,7 +74,7 @@ def create_diagram(output_path: str = "docs/assets/methodology.png") -> None:
     )  # fmt: skip
     box(
         ax, (3.45, 4.9), 2.25, 1.7, "Attention Generator",
-        "Generates target-style content\nAttention mask selects the cell\nBlends content with the source",
+        "Spatial attention blocks\nRestyles only the cell\n(known cell mask);\nbackground left untouched",
         "#C5CAE9", blue, blue, body_color="#283593", lw=2,
     )  # fmt: skip
     box(

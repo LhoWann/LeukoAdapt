@@ -4,7 +4,7 @@ Runs one stage (or all three) for one scenario, or one baseline (source-only, co
 
 Defaults follow Baydilli (2025) except for two modifications that keep the GAN from collapsing: source cells are pasted
 onto real ALL-IDB backgrounds before translation, and the discriminator compares whole images. The literal paper GAN
-is `--real_mask source --no_composite`.
+is `--fusion learned --real_mask source --no_composite --allow_collapse`.
 """
 
 import argparse
@@ -73,6 +73,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="none",
         choices=["none", "source", "target"],
         help="D_T inputs: 'none' = full t vs s' (modified), 'source' = s_a*t vs s_a*s' (paper Eq. 3), 'target' = t_a*t",
+    )
+    parser.add_argument(
+        "--fusion",
+        type=str,
+        default="cell",
+        choices=["cell", "learned"],
+        help="Generator fusion mask: 'cell' = known cell mask (modified), 'learned' = attention mask A_S (paper)",
+    )
+    parser.add_argument(
+        "--allow_collapse",
+        action="store_true",
+        help="Keep training the GAN after its translation collapsed (s' = s) for 3 epochs instead of stopping",
     )
     parser.add_argument(
         "--no_composite",
@@ -197,8 +209,10 @@ def main(argv: list[str] | None = None) -> int:
             lambda_pixel=args.lambda_pixel,
             lambda_identity=args.lambda_identity,
             real_mask=args.real_mask,
+            fusion=args.fusion,
             balance_target_classes=not args.no_target_balance,
             background_dir=gan_background_dir,
+            allow_collapse=args.allow_collapse,
             use_amp=use_amp,
             device=device,
         )

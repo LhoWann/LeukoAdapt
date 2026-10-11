@@ -14,6 +14,7 @@ from src.models.generator import AttentionGenerator
 
 DARK_THRESHOLD = -0.84
 RealMask = Literal["source", "target", "none"]
+Fusion = Literal["cell", "learned"]
 
 
 class AttentionCycleGAN(nn.Module):
@@ -32,6 +33,7 @@ class AttentionCycleGAN(nn.Module):
         lambda_pixel: float = 1.0,
         lambda_identity: float = 0.0,
         real_mask: RealMask = "none",
+        fusion: Fusion = "cell",
     ) -> None:
         """Initialize Attention-Guided CycleGAN.
 
@@ -47,6 +49,10 @@ class AttentionCycleGAN(nn.Module):
                 optimum: s_a = 0 makes both inputs zero and gives s' = s, and on C-NMC -> ALL-IDB it collapses there
                 within one epoch even with lambda_pixel = 0. "target" uses t_a * t vs s_a * s' with t_a = A_T(t, F(t))
                 as in UAIT [21]. "none" compares the full images t vs s', as in CycleGAN.
+            fusion: Mask that blends G(s) into s. "learned" is the paper's attention mask A_S (Algorithm 1); it can
+                close completely, which satisfies every reconstruction loss at once and collapses the translation.
+                "cell" uses the known fusion mask of the segmented source cell, so the generator always restyles the
+                cell and never the background.
         """
         super().__init__()
         self.lambda_gan = lambda_gan
@@ -54,6 +60,7 @@ class AttentionCycleGAN(nn.Module):
         self.lambda_pixel = lambda_pixel
         self.lambda_identity = lambda_identity
         self.real_mask = real_mask
+        self.fusion = fusion
 
         self.gen_s2t = AttentionGenerator(in_channels, in_channels, num_res_blocks)
         self.gen_t2s = AttentionGenerator(in_channels, in_channels, num_res_blocks)
@@ -66,16 +73,26 @@ class AttentionCycleGAN(nn.Module):
         self.criterion_pixel = nn.L1Loss()
         self.criterion_identity = nn.L1Loss()
 
-    def forward_source(self, real_s: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward_source(
+        self, real_s: torch.Tensor, cell_mask: torch.Tensor | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Translate source image to target domain and recover it (Algorithm 4, lines 2-5).
 
         Args:
             real_s: Source image of shape (B, 3, 128, 128).
+            cell_mask: Fusion mask of shape (B, 1, 128, 128), required when fusion is "cell".
 
         Returns:
-            Tuple of (fake_t s', s_a, recovered_s s'').
+            Tuple of (fake_t s', fusion mask s_a, recovered_s s'').
         """
-        fake_t, s_a = self.attn_s(real_s, self.gen_s2t(real_s))
+        content = self.gen_s2t(real_s)
+        if self.fusion == "learned":
+            fake_t, s_a = self.attn_s(real_s, content)
+        elif cell_mask is None:
+            raise ValueError("fusion 'cell' needs the cell mask of the source batch")
+        else:
+            s_a = cell_mask
+            fake_t = s_a * content + (1.0 - s_a) * real_s
         recovered_s, _ = self.attn_t(fake_t, self.gen_t2s(fake_t))
         return fake_t, s_a, recovered_s
 
@@ -83,17 +100,19 @@ class AttentionCycleGAN(nn.Module):
         self,
         real_s: torch.Tensor,
         real_t: torch.Tensor | None = None,
+        cell_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, dict[str, float], tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Compute the generator objective of Eq. (6) with the least-squares adversarial term of Eq. (8).
 
         Args:
             real_s: Real source image batch.
             real_t: Real target image batch, required when lambda_identity > 0.
+            cell_mask: Fusion mask of the source batch, required when fusion is "cell".
 
         Returns:
             Tuple of (total_loss, loss_dict, (discriminator fake input, fake_t s', s_a)).
         """
-        fake_t, s_a, recovered_s = self.forward_source(real_s)
+        fake_t, s_a, recovered_s = self.forward_source(real_s, cell_mask)
         masked_fake = fake_t if self.real_mask == "none" else s_a * fake_t
 
         pred_fake = self.disc_t(masked_fake)
@@ -118,7 +137,8 @@ class AttentionCycleGAN(nn.Module):
                 "loss_pixel": loss_pixel.item(),
                 "loss_identity": loss_identity.item(),
                 "mask_mean": s_a.mean().item(),
-                "translation_delta": (fake_t - real_s).abs().mean().item(),
+                # Change inside the fusion region; it also vanishes when a learned mask closes (s' = s).
+                "translation_delta": ((s_a * (fake_t - real_s).abs()).sum() / (3 * s_a.sum() + 1e-6)).item(),
                 "fake_dark_fraction": (fake_t.max(dim=1).values < DARK_THRESHOLD).float().mean().item(),
             }
         return total_loss, loss_dict, (masked_fake, fake_t, s_a)

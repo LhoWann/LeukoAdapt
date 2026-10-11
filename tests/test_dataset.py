@@ -29,12 +29,16 @@ class TestProcessedDatasets(unittest.TestCase):
             raise AssertionError(f"Expected at least 435 samples, got {len(dataset)}")
 
         loader = DataLoader(dataset, batch_size=4, shuffle=True)
-        img_s, img_t = next(iter(loader))
+        img_s, img_t, mask = next(iter(loader))
 
         if img_s.shape != (4, 3, 128, 128):
             raise AssertionError(f"Expected source shape (4, 3, 128, 128), got {img_s.shape}")
         if img_t.shape != (4, 3, 128, 128):
             raise AssertionError(f"Expected target shape (4, 3, 128, 128), got {img_t.shape}")
+        if mask.shape != (4, 1, 128, 128) or mask.min() < 0 or mask.max() > 1 or mask.sum() == 0:
+            raise AssertionError(
+                f"Expected a non-empty fusion mask in [0, 1] of shape (4, 1, 128, 128), got {mask.shape}"
+            )
 
     def test_target_class_balancing(self) -> None:
         """Verify the Scenario 1 target pool (410 ALL + 25 Normal) is padded with flipped Normal copies to 410 + 410."""

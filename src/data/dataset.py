@@ -5,12 +5,13 @@ import random
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import torch
 import torchvision.transforms as T
 from PIL import Image
 from torch.utils.data import Dataset
 
-from src.data.backgrounds import composite_on_background, load_background_paths
+from src.data.backgrounds import cell_alpha, composite_with_mask, fusion_mask, load_background_paths
 
 
 def get_default_transform(image_size: int = 128, is_train: bool = True) -> Callable:
@@ -40,7 +41,8 @@ def get_default_transform(image_size: int = 128, is_train: bool = True) -> Calla
 class UnpairedLeukemiaDataset(Dataset):
     """Unpaired dataset loader for CycleGAN training across domains.
 
-    Loads images from source domain (C-NMC) and target domain (ALL-IDB).
+    Loads images from source domain (C-NMC) and target domain (ALL-IDB). Every sample also carries the fusion mask of
+    the source cell (the region the generator may change), flipped together with the source image.
     """
 
     def __init__(
@@ -56,7 +58,8 @@ class UnpairedLeukemiaDataset(Dataset):
         Args:
             source_dir: Directory containing source domain images.
             target_dir: Directory containing target domain images.
-            transform: Optional transform applied to both source and target images.
+            transform: Optional transform of the target images. Source images are only resized and normalised here,
+                because their random flip must also flip the fusion mask.
             balance_target_classes: Pad the minority target class ('all'/'hem' subfolders) with horizontally flipped
                 copies up to the majority count, as in Baydilli (2025) Section 5.1.2 (paper: 410 ALL + 249 Normal ->
                 410 ALL + 410 Normal; here 410 ALL + 25 Normal -> 410 + 410).
@@ -82,6 +85,7 @@ class UnpairedLeukemiaDataset(Dataset):
 
         self.backgrounds = load_background_paths(background_dir) if background_dir else []
         self.transform = transform or get_default_transform(image_size=128, is_train=True)
+        self.source_transform = get_default_transform(image_size=128, is_train=False)
 
     @staticmethod
     def _load_image_paths(directory: str) -> list[Path]:
@@ -98,22 +102,24 @@ class UnpairedLeukemiaDataset(Dataset):
         """Length is maximum between source and target sets."""
         return max(len(self.source_paths), len(self.target_items))
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Get unpaired sample (s, t)."""
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Get an unpaired sample (s, t, fusion mask of s)."""
         idx_s = index % len(self.source_paths)
         target_path, flip_target = self.target_items[random.randint(0, len(self.target_items) - 1)]
 
         img_s = Image.open(self.source_paths[idx_s]).convert("RGB")
         if self.backgrounds:
-            img_s = composite_on_background(img_s, Image.open(random.choice(self.backgrounds)))
+            img_s, mask = composite_with_mask(img_s, Image.open(random.choice(self.backgrounds)))
+        else:
+            mask = fusion_mask(cell_alpha(img_s))
+        if random.random() < 0.5:
+            img_s, mask = img_s.transpose(Image.Transpose.FLIP_LEFT_RIGHT), mask[:, ::-1]
         img_t = Image.open(target_path).convert("RGB")
         if flip_target:
             img_t = img_t.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
 
-        tensor_s = self.transform(img_s)
-        tensor_t = self.transform(img_t)
-
-        return tensor_s, tensor_t
+        mask_tensor = torch.from_numpy(np.ascontiguousarray(mask, dtype=np.float32))[None]
+        return self.source_transform(img_s), self.transform(img_t), mask_tensor
 
 
 class LeukemiaClassificationDataset(Dataset):

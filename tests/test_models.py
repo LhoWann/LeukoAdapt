@@ -72,24 +72,40 @@ class TestAttentionCycleGANModels(unittest.TestCase):
             raise AssertionError(f"Expected masked logits (2, 1, 14, 14), got {out_masked.shape}")
 
     def test_cyclegan_losses(self) -> None:
-        """Verify AttentionCycleGAN composite loss calculations for every real-mask reading."""
+        """Verify AttentionCycleGAN loss calculations for every discriminator input and fusion mode."""
         s = torch.randn(self.batch_size, 3, self.img_size, self.img_size)
         t = torch.randn(self.batch_size, 3, self.img_size, self.img_size)
+        cell = torch.zeros(self.batch_size, 1, self.img_size, self.img_size)
+        cell[..., 40:90, 40:90] = 1.0
 
-        for real_mask in ("target", "source", "none"):
-            model = AttentionCycleGAN(real_mask=real_mask, lambda_identity=5.0)
-            loss_g, g_dict, (disc_fake, fake_t, s_a) = model.compute_generator_loss(s, t)
-            loss_d, _ = model.compute_discriminator_loss(model.mask_real_target(t, s_a), disc_fake.detach())
+        for fusion in ("learned", "cell"):
+            for real_mask in ("target", "source", "none"):
+                name = f"{fusion}/{real_mask}"
+                model = AttentionCycleGAN(real_mask=real_mask, fusion=fusion, lambda_identity=5.0)
+                loss_g, g_dict, (disc_fake, fake_t, s_a) = model.compute_generator_loss(s, t, cell)
+                loss_d, _ = model.compute_discriminator_loss(model.mask_real_target(t, s_a), disc_fake.detach())
 
-            if loss_g.item() <= 0 or loss_d.item() <= 0:
-                raise AssertionError(f"{real_mask}: losses must be positive, got G={loss_g.item()} D={loss_d.item()}")
-            if not {"loss_gan", "loss_cycle", "loss_pixel", "loss_identity"} <= g_dict.keys():
-                raise AssertionError(f"{real_mask}: missing loss terms in {sorted(g_dict)}")
-            expected_fake = fake_t if real_mask == "none" else s_a * fake_t
-            if not torch.allclose(disc_fake, expected_fake):
-                raise AssertionError(f"{real_mask}: unexpected discriminator fake input")
-            if real_mask == "none" and not torch.equal(model.mask_real_target(t, s_a), t):
-                raise AssertionError("real_mask 'none' must feed the full target image")
+                if loss_g.item() <= 0 or loss_d.item() <= 0:
+                    raise AssertionError(f"{name}: losses must be positive, got G={loss_g.item()} D={loss_d.item()}")
+                if not {"loss_gan", "loss_cycle", "loss_pixel", "loss_identity"} <= g_dict.keys():
+                    raise AssertionError(f"{name}: missing loss terms in {sorted(g_dict)}")
+                expected_fake = fake_t if real_mask == "none" else s_a * fake_t
+                if not torch.allclose(disc_fake, expected_fake):
+                    raise AssertionError(f"{name}: unexpected discriminator fake input")
+                if real_mask == "none" and not torch.equal(model.mask_real_target(t, s_a), t):
+                    raise AssertionError("real_mask 'none' must feed the full target image")
+
+    def test_cell_fusion_keeps_background(self) -> None:
+        """With the cell fusion mask the generator can change only the cell, never the background."""
+        model = AttentionCycleGAN(fusion="cell")
+        s = torch.randn(1, 3, self.img_size, self.img_size)
+        cell = torch.zeros(1, 1, self.img_size, self.img_size)
+        cell[..., 40:90, 40:90] = 1.0
+        fake_t, s_a, _ = model.forward_source(s, cell)
+        if not torch.equal(fake_t[..., :40, :], s[..., :40, :]) or not torch.equal(s_a, cell):
+            raise AssertionError("background pixels outside the cell mask must stay unchanged")
+        with self.assertRaises(ValueError):
+            model.forward_source(s)
 
     def test_closed_mask_is_identity(self) -> None:
         """A fully closed attention mask returns the source unchanged (the collapse of the literal Eq. 3)."""

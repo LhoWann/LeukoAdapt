@@ -13,9 +13,9 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from tqdm import tqdm
 
-from src.data.backgrounds import background_for, composite_on_background
+from src.data.backgrounds import background_for, cell_alpha, composite_with_mask, fusion_mask
 from src.data.dataset import UnpairedLeukemiaDataset, get_default_transform
-from src.models.cyclegan import AttentionCycleGAN, RealMask
+from src.models.cyclegan import AttentionCycleGAN, Fusion, RealMask
 from src.utils.console import (
     print_device_header,
     print_metrics_table,
@@ -25,6 +25,7 @@ from src.utils.image_pool import ImagePool
 
 COLLAPSE_CHECK_EPOCH = 3
 MIN_TRANSLATION_DELTA = 0.02
+COLLAPSE_PATIENCE = 3
 NUM_PREVIEW_IMAGES = 8
 
 
@@ -55,8 +56,10 @@ def train_attention_cyclegan(
     lambda_pixel: float = 1.0,
     lambda_identity: float = 0.0,
     real_mask: RealMask = "none",
+    fusion: Fusion = "cell",
     balance_target_classes: bool = True,
     background_dir: str | None = None,
+    allow_collapse: bool = False,
     buffer_size: int = 50,
     save_interval: int = 5,
     image_size: int = 128,
@@ -78,9 +81,12 @@ def train_attention_cyclegan(
         lambda_pixel: Pixel loss multiplier (default 1.0).
         lambda_identity: Target identity loss multiplier (default 0, not in the paper).
         real_mask: Mask of the real discriminator input, see AttentionCycleGAN.
+        fusion: Fusion mask of the generator, see AttentionCycleGAN.
         balance_target_classes: Pad the minority target class with flipped copies (paper Section 5.1.2).
         background_dir: Bank of target backgrounds that source cells are pasted onto (None keeps the black
             C-NMC background, as in the paper).
+        allow_collapse: Keep training when the translation has collapsed (s' = s) for COLLAPSE_PATIENCE consecutive
+            epochs, e.g. to document the literal paper GAN. By default training stops instead of wasting GPU hours.
         buffer_size: History image pool capacity (default 50).
         save_interval: Save model weights and a preview grid every N epochs (default 5). The paper keeps the
             visually best of these checkpoints.
@@ -91,6 +97,8 @@ def train_attention_cyclegan(
     Returns:
         Trained AttentionCycleGAN model.
 
+    Raises:
+        RuntimeError: If the translation stays collapsed for COLLAPSE_PATIENCE epochs and allow_collapse is False.
     """
     target_device = torch.device(device)
     out_path = Path(output_dir)
@@ -107,13 +115,15 @@ def train_attention_cyclegan(
     eval_transform = get_default_transform(image_size=image_size, is_train=False)
     preview_step = max(1, len(dataset.source_paths) // NUM_PREVIEW_IMAGES)
     preview_paths = dataset.source_paths[::preview_step][:NUM_PREVIEW_IMAGES]
-    preview_images = [Image.open(p).convert("RGB") for p in preview_paths]
-    if dataset.backgrounds:
-        preview_images = [
-            composite_on_background(img, Image.open(background_for(p.name, dataset.backgrounds)))
-            for img, p in zip(preview_images, preview_paths, strict=True)
-        ]
-    preview_s = torch.stack([eval_transform(img) for img in preview_images]).to(target_device)
+    previews = []
+    for path in preview_paths:
+        img = Image.open(path).convert("RGB")
+        if dataset.backgrounds:
+            previews.append(composite_with_mask(img, Image.open(background_for(path.name, dataset.backgrounds))))
+        else:
+            previews.append((img, fusion_mask(cell_alpha(img))))
+    preview_s = torch.stack([eval_transform(img) for img, _ in previews]).to(target_device)
+    preview_m = torch.stack([torch.from_numpy(mask)[None] for _, mask in previews]).to(target_device)
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -131,6 +141,7 @@ def train_attention_cyclegan(
         lambda_pixel=lambda_pixel,
         lambda_identity=lambda_identity,
         real_mask=real_mask,
+        fusion=fusion,
     ).to(target_device)
 
     print_model_summary(model, model_name="AttentionCycleGAN")
@@ -154,6 +165,7 @@ def train_attention_cyclegan(
     masked_fake_pool = ImagePool(pool_size=buffer_size)
     scaler = torch.amp.GradScaler("cuda", enabled=(use_amp and device == "cuda"))
 
+    collapsed_epochs = 0
     for epoch in range(1, epochs + 1):
         model.train()
         epoch_stats: dict[str, float] = defaultdict(float)
@@ -165,16 +177,17 @@ def train_attention_cyclegan(
             dynamic_ncols=True,
         )
 
-        for step, (real_s, real_t) in enumerate(pbar, start=1):
+        for step, (real_s, real_t, cell_mask) in enumerate(pbar, start=1):
             real_s = real_s.to(target_device)
             real_t = real_t.to(target_device)
+            cell_mask = cell_mask.to(target_device)
 
             # ---------------------
             # Train Generator (G)
             # ---------------------
             optimizer_g.zero_grad()
             with torch.amp.autocast("cuda", enabled=(use_amp and device == "cuda")):
-                loss_g, g_stats, (masked_fake, _, s_a) = model.compute_generator_loss(real_s, real_t)
+                loss_g, g_stats, (masked_fake, _, s_a) = model.compute_generator_loss(real_s, real_t, cell_mask)
 
             scaler.scale(loss_g).backward()
             scaler.step(optimizer_g)
@@ -212,11 +225,12 @@ def train_attention_cyclegan(
         avg_stats = {key: value / len(dataloader) for key, value in epoch_stats.items()}
 
         collapsed = epoch >= COLLAPSE_CHECK_EPOCH and avg_stats["translation_delta"] < MIN_TRANSLATION_DELTA
+        collapsed_epochs = collapsed_epochs + 1 if collapsed else 0
         if collapsed:
             delta, mask_mean = avg_stats["translation_delta"], avg_stats["mask_mean"]
             print(
-                f"WARNING: translation collapsed at epoch {epoch} (real_mask='{real_mask}'): mean |s' - s| = {delta:.4f} "
-                f"< {MIN_TRANSLATION_DELTA}, mask mean {mask_mean:.4f}. The attention mask closed, so s' = s."
+                f"WARNING: translation collapsed at epoch {epoch} (fusion='{fusion}', real_mask='{real_mask}'): mean "
+                f"|s' - s| in the fusion region = {delta:.4f} < {MIN_TRANSLATION_DELTA}, mask mean {mask_mean:.4f}, so s' = s."
             )
 
         if epoch % 5 == 0 or epoch == 1 or epoch == epochs:
@@ -239,6 +253,7 @@ def train_attention_cyclegan(
                 {
                     "epoch": epoch,
                     "real_mask": real_mask,
+                    "fusion": fusion,
                     "background_dir": background_dir,
                     "lambda_pixel": lambda_pixel,
                     "lambda_identity": lambda_identity,
@@ -255,9 +270,15 @@ def train_attention_cyclegan(
             )
             model.eval()
             with torch.no_grad():
-                preview_fake, preview_mask = model.attn_s(preview_s, model.gen_s2t(preview_s))
+                preview_fake, preview_mask, _ = model.forward_source(preview_s, preview_m)
             grid = torch.cat([preview_s, preview_fake, preview_mask.expand(-1, 3, -1, -1) * 2 - 1])
             save_image(grid * 0.5 + 0.5, out_path / f"preview_epoch_{epoch:03d}.png", nrow=len(preview_s))
+
+        if collapsed_epochs >= COLLAPSE_PATIENCE and not allow_collapse:
+            raise RuntimeError(
+                f"GAN translation collapsed for {collapsed_epochs} consecutive epochs (s' = s); stopping at epoch {epoch}. "
+                "Pass --allow_collapse to keep training anyway (e.g. for the literal paper GAN)."
+            )
 
     print("Attention-CycleGAN training finished successfully.")
     return model
